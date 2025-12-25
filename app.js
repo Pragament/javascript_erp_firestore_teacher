@@ -1,31 +1,255 @@
-// Obfuscated Firebase config
-const _0x=['edutrack-admin','firebaseapp','AIzaSyAFpwi3k7Qth9MiqqRGKstY0Zkj_vrcdFY','193864081571','1:193864081571:web:7501afde01291f81e61f16','com','storage','app'];
-const _cfg={k:_0x[2],d:_0x[0]+'.'+_0x[1]+'.'+_0x[5],p:_0x[0],s:_0x[0]+'.'+_0x[1]+_0x[6]+'.'+_0x[7],m:_0x[3],a:_0x[4]};
-firebase.initializeApp({apiKey:_cfg.k,authDomain:_cfg.d,projectId:_cfg.p,storageBucket:_cfg.s,messagingSenderId:_cfg.m,appId:_cfg.a});
+// Firebase Configuration
+const firebaseConfigParts = [
+    'edutrack-admin',
+    'firebaseapp',
+    'AIzaSyAFpwi3k7Qth9MiqqRGKstY0Zkj_vrcdFY',
+    '193864081571',
+    '1:193864081571:web:7501afde01291f81e61f16',
+    'com',
+    'storage',
+    'app'
+];
 
-const _db=firebase.firestore(),_auth=firebase.auth();
-let _user=null,_secId=null,_secName='';
+const firebaseConfig = {
+    apiKey: firebaseConfigParts[2],
+    authDomain: firebaseConfigParts[0] + '.' + firebaseConfigParts[1] + '.' + firebaseConfigParts[5],
+    projectId: firebaseConfigParts[0],
+    storageBucket: firebaseConfigParts[0] + '.' + firebaseConfigParts[1] + firebaseConfigParts[6] + '.' + firebaseConfigParts[7],
+    messagingSenderId: firebaseConfigParts[3],
+    appId: firebaseConfigParts[4]
+};
 
-const _el={auth:document.getElementById('auth-screen'),main:document.getElementById('main-app'),signin:document.getElementById('google-signin'),signout:document.getElementById('signout-btn'),email:document.getElementById('user-email'),secName:document.getElementById('section-name'),tests:document.getElementById('tests-container'),refresh:document.getElementById('refresh-tests')};
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
 
-_auth.onAuthStateChanged(async u=>{if(u){_user=u;_el.auth.classList.add('d-none');_el.main.classList.remove('d-none');_el.email.textContent=u.email;await _init()}else{_user=null;_el.main.classList.add('d-none');_el.auth.classList.remove('d-none')}});
+// Firebase services
+const firestore = firebase.firestore();
+const auth = firebase.auth();
 
-_el.signin.onclick=async()=>{try{await _auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())}catch(e){alert('Sign in failed: '+e.message)}};
+// Global variables
+let currentUser = null;
+let currentSectionId = null;
+let currentSectionName = '';
 
-_el.signout.onclick=()=>_auth.signOut();
+// DOM elements
+const elements = {
+    authScreen: document.getElementById('auth-screen'),
+    mainApp: document.getElementById('main-app'),
+    googleSignin: document.getElementById('google-signin'),
+    signoutBtn: document.getElementById('signout-btn'),
+    userEmail: document.getElementById('user-email'),
+    sectionName: document.getElementById('section-name'),
+    testsContainer: document.getElementById('tests-container'),
+    refreshTests: document.getElementById('refresh-tests')
+};
 
-async function _init(){await _getSec();if(_secId)await _loadTests()}
+// Authentication state listener
+auth.onAuthStateChanged(async (user) => {
+    if (user) {
+        currentUser = user;
+        elements.authScreen.classList.add('d-none');
+        elements.mainApp.classList.remove('d-none');
+        elements.userEmail.textContent = user.email;
+        await initializeApp();
+    } else {
+        currentUser = null;
+        elements.mainApp.classList.add('d-none');
+        elements.authScreen.classList.remove('d-none');
+    }
+});
 
-async function _getSec(){try{const snap=await _db.collection('teacherAssignments').where('teacherEmail','==',_user.email).limit(1).get();if(snap.empty){_el.secName.textContent='No section assigned';_el.tests.innerHTML='<div class="p-4 text-center text-muted">You are not assigned to any section yet. Contact your school admin.</div>';return}const d=snap.docs[0].data();_secId=d.sectionId;_secName=d.sectionName||_secId;_el.secName.textContent=_secName}catch(e){console.error('Get section:',e);_el.secName.textContent='Error loading section'}}
+// Google Sign-In
+elements.googleSignin.onclick = async () => {
+    try {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        await auth.signInWithPopup(provider);
+    } catch (error) {
+        alert('Sign in failed: ' + error.message);
+    }
+};
 
-async function _loadTests(){try{const snap=await _db.collection('tests').where('sectionId','==',_secId).get();if(snap.empty){_el.tests.innerHTML='<div class="p-4 text-center text-muted">No tests found for your section</div>';return}let html='<div class="p-3">';for(const doc of snap.docs){const t=doc.data();const rc=await _getRC(doc.id);html+=`<div class="test-card"><div class="d-flex justify-content-between align-items-start mb-2"><h5 class="fw-bold">${t.testName||'Test'}</h5><span class="badge" style="background:#16a085;color:white">${rc} Results</span></div><p class="text-muted mb-3">${t.description||'No description'}</p><button class="btn" style="background:#16a085;color:white;border:none" onclick="_viewRes('${doc.id}','${t.testName||'Test'}')"><i class="bi bi-eye me-2"></i>View Student Results</button></div>`}html+='</div>';_el.tests.innerHTML=html}catch(e){console.error('Load tests:',e);_el.tests.innerHTML='<div class="p-4 text-center text-danger">Error loading tests</div>'}}
+// Sign out
+elements.signoutBtn.onclick = () => auth.signOut();
 
-async function _getRC(tid){try{const snap=await _db.collection('results').where('testId','==',tid).get();return snap.size}catch(e){return 0}}
+// Initialize app after authentication
+async function initializeApp() {
+    await getAssignedSection();
+    if (currentSectionId) {
+        await loadTests();
+    }
+}
 
-window._viewRes=async(tid,tname)=>{const modal=new bootstrap.Modal(document.getElementById('studentsModal'));const list=document.getElementById('students-list');list.innerHTML='<div class="text-center py-4"><div class="spinner-border" style="color:#16a085"></div></div>';modal.show();try{const snap=await _db.collection('results').where('testId','==',tid).get();if(snap.empty){list.innerHTML='<div class="text-center text-muted py-4">No student results yet</div>';return}const students=await _getStud();let html='';for(const doc of snap.docs){const r=doc.data();const st=students.find(s=>s.id===r.studentId);const sname=st?st.name:'Unknown';const phone=st?st.phone:'';const score=_calcScore(r);html+=`<div class="student-card"><div><h6 class="mb-1">${sname}</h6><small class="text-muted">${r.studentId}</small></div><div class="d-flex align-items-center gap-2"><span class="result-badge ${score>=70?'correct':'wrong'}">${score}%</span><a href="report.html?testId=${tid}&studentId=${r.studentId}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none"><i class="bi bi-file-text"></i> View Report</a>${phone?`<a href="https://wa.me/${phone.replace(/\D/g,'')}?text=Hi%20${encodeURIComponent(sname)},%20your%20test%20report:%20${window.location.origin}/report.html?testId=${tid}&studentId=${r.studentId}" target="_blank" class="btn btn-sm" style="background:#25D366;color:white;border:none"><i class="bi bi-whatsapp"></i> Share</a>`:''}</div></div>`}list.innerHTML=html}catch(e){console.error('View results:',e);list.innerHTML='<div class="text-center text-danger py-4">Error loading results</div>'}};
+// Get teacher's assigned section
+async function getAssignedSection() {
+    try {
+        const snapshot = await firestore.collection('teacherAssignments')
+            .where('teacherEmail', '==', currentUser.email)
+            .limit(1)
+            .get();
+        
+        if (snapshot.empty) {
+            elements.sectionName.textContent = 'No section assigned';
+            elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are not assigned to any section yet. Contact your school admin.</div>';
+            return;
+        }
 
-async function _getStud(){try{const snap=await _db.collection('students').where('sectionId','==',_secId).get();return snap.docs.map(d=>({id:d.id,...d.data()}))}catch(e){return[]}}
+        const assignment = snapshot.docs[0].data();
+        currentSectionId = assignment.sectionId;
+        currentSectionName = assignment.sectionName || currentSectionId;
+        elements.sectionName.textContent = currentSectionName;
+    } catch (error) {
+        console.error('Get section:', error);
+        elements.sectionName.textContent = 'Error loading section';
+    }
+}
 
-function _calcScore(r){let correct=0,total=0;for(let k in r){if(k.startsWith('Q')){total++;if(r[k]==='R')correct++}}return total>0?Math.round(correct/total*100):0}
+// Load tests for the assigned section
+async function loadTests() {
+    try {
+        const snapshot = await firestore.collection('tests')
+            .where('sectionId', '==', currentSectionId)
+            .get();
+        
+        if (snapshot.empty) {
+            elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">No tests found for your section</div>';
+            return;
+        }
 
-_el.refresh.onclick=()=>_loadTests();
+        let html = '<div class="p-3">';
+        
+        for (const doc of snapshot.docs) {
+            const test = doc.data();
+            const resultCount = await getResultCount(doc.id);
+            
+            html += `
+                <div class="test-card">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h5 class="fw-bold">${test.testName || 'Test'}</h5>
+                        <span class="badge" style="background:#16a085;color:white">${resultCount} Results</span>
+                    </div>
+                    <p class="text-muted mb-3">${test.description || 'No description'}</p>
+                    <button class="btn" style="background:#16a085;color:white;border:none" 
+                            onclick="viewStudentResults('${doc.id}', '${test.testName || 'Test'}')">
+                        <i class="bi bi-eye me-2"></i>View Student Results
+                    </button>
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+        elements.testsContainer.innerHTML = html;
+    } catch (error) {
+        console.error('Load tests:', error);
+        elements.testsContainer.innerHTML = '<div class="p-4 text-center text-danger">Error loading tests</div>';
+    }
+}
+
+// Get count of results for a test
+async function getResultCount(testId) {
+    try {
+        const snapshot = await firestore.collection('results')
+            .where('testId', '==', testId)
+            .get();
+        return snapshot.size;
+    } catch (error) {
+        return 0;
+    }
+}
+
+// View student results for a test
+window.viewStudentResults = async (testId, testName) => {
+    const modal = new bootstrap.Modal(document.getElementById('studentsModal'));
+    const studentsList = document.getElementById('students-list');
+    
+    studentsList.innerHTML = '<div class="text-center py-4"><div class="spinner-border" style="color:#16a085"></div></div>';
+    modal.show();
+    
+    try {
+        const snapshot = await firestore.collection('results')
+            .where('testId', '==', testId)
+            .get();
+        
+        if (snapshot.empty) {
+            studentsList.innerHTML = '<div class="text-center text-muted py-4">No student results yet</div>';
+            return;
+        }
+
+        const students = await getStudents();
+        let html = '';
+        
+        for (const doc of snapshot.docs) {
+            const result = doc.data();
+            const student = students.find(s => s.id === result.studentId);
+            const studentName = student ? student.name : 'Unknown';
+            const studentPhone = student ? student.phone : '';
+            const score = calculateScore(result);
+            
+            html += `
+                <div class="student-card">
+                    <div>
+                        <h6 class="mb-1">${studentName}</h6>
+                        <small class="text-muted">${result.studentId}</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="result-badge ${score >= 70 ? 'correct' : 'wrong'}">${score}%</span>
+                        <a href="report.html?testId=${testId}&studentId=${result.studentId}" 
+                           target="_blank" 
+                           class="btn btn-sm" 
+                           style="background:#2c3e50;color:white;border:none">
+                            <i class="bi bi-file-text"></i> View Report
+                        </a>
+                        ${studentPhone ? `
+                            <a href="https://wa.me/${studentPhone.replace(/\D/g, '')}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/report.html?testId=${testId}&studentId=${result.studentId}" 
+                               target="_blank" 
+                               class="btn btn-sm" 
+                               style="background:#25D366;color:white;border:none">
+                                <i class="bi bi-whatsapp"></i> Share
+                            </a>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        
+        studentsList.innerHTML = html;
+    } catch (error) {
+        console.error('View results:', error);
+        studentsList.innerHTML = '<div class="text-center text-danger py-4">Error loading results</div>';
+    }
+};
+
+// Get students in the section
+async function getStudents() {
+    try {
+        const snapshot = await firestore.collection('students')
+            .where('sectionId', '==', currentSectionId)
+            .get();
+        
+        return snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+    } catch (error) {
+        return [];
+    }
+}
+
+// Calculate score from result data
+function calculateScore(result) {
+    let correct = 0;
+    let total = 0;
+    
+    for (let key in result) {
+        if (key.startsWith('Q')) {
+            total++;
+            if (result[key] === 'R') {
+                correct++;
+            }
+        }
+    }
+    
+    return total > 0 ? Math.round((correct / total) * 100) : 0;
+}
+
+// Refresh tests
+elements.refreshTests.onclick = () => loadTests();
