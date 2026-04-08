@@ -44,9 +44,14 @@
                     <i class="bi bi-info-circle me-2"></i>
                     <strong>Your Section:</strong> <span id="section-name">Loading...</span>
                 </div>
-                <div id="section-switcher" class="d-none d-flex align-items-center gap-2">
-                    <label for="section-select" class="fw-semibold mb-0">Change Section</label>
-                    <select id="section-select" class="form-select form-select-sm" style="min-width: 220px;"></select>
+                <div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2">
+                    <a id="analytics-link" href="analytics.html" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none;">
+                        <i class="bi bi-bar-chart-line me-1"></i> Topic Analytics
+                    </a>
+                    <div id="section-switcher" class="d-none d-flex align-items-center gap-2">
+                        <label for="section-select" class="fw-semibold mb-0">Change Section</label>
+                        <select id="section-select" class="form-select form-select-sm" style="min-width: 220px;"></select>
+                    </div>
                 </div>
             </div>
 
@@ -68,20 +73,6 @@
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal fade" id="studentsModal" tabindex="-1">
-        <div class="modal-dialog modal-xl modal-dialog-scrollable">
-            <div class="modal-content">
-                <div class="modal-header" style="background: #16a085; color: white;">
-                    <h5 class="modal-title"><i class="bi bi-people me-2"></i>Student Results</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div id="students-list"></div>
                 </div>
             </div>
         </div>

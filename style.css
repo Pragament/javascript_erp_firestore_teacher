@@ -6,3 +6,7 @@
 .dataTable-input{border:1px solid #e1e8ed;border-radius:8px;padding:.45rem .75rem}
 .dataTable-selector{border:1px solid #e1e8ed;border-radius:8px;padding:.35rem .5rem}
 @media print{.dataTable-top,.dataTable-bottom{display:none!important}}
+
+.analytics-page{max-width:1280px}
+.analytics-stat-card{border-top:4px solid #16a085}
+.analytics-stat-value{font-size:2rem;font-weight:700;color:#2c3e50;line-height:1.1}

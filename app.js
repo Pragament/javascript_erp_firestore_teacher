@@ -40,6 +40,7 @@ const elements = {
     signoutBtn: document.getElementById('signout-btn'),
     userEmail: document.getElementById('user-email'),
     sectionName: document.getElementById('section-name'),
+    analyticsLink: document.getElementById('analytics-link'),
     sectionSwitcher: document.getElementById('section-switcher'),
     sectionSelect: document.getElementById('section-select'),
     testsContainer: document.getElementById('tests-container'),
@@ -116,6 +117,10 @@ function setCurrentSection(sectionId) {
     currentSectionId = section ? section.id : null;
     currentSectionName = section ? section.name : '';
     elements.sectionName.textContent = currentSectionName || 'No section assigned';
+    if (elements.analyticsLink) {
+        const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
+        elements.analyticsLink.href = `analytics.html${query}`;
+    }
     if (elements.sectionSelect && section) {
         elements.sectionSelect.value = section.id;
     }
@@ -135,6 +140,10 @@ function renderSectionSwitcher() {
     `).join('');
     elements.sectionSelect.value = currentSectionId;
     elements.sectionSwitcher.classList.remove('d-none');
+}
+
+function getTestResultsPageUrl(testId) {
+    return `test-results.html?testId=${encodeURIComponent(testId)}`;
 }
 
 // Get teacher's assigned sections
@@ -192,10 +201,11 @@ async function loadTests() {
                         <span class="badge" style="background:#16a085;color:white">${resultCount} Results</span>
                     </div>
                     <p class="text-muted mb-3">${test.description || 'No description'}</p>
-                    <button class="btn" style="background:#16a085;color:white;border:none" 
-                            onclick="viewStudentResults('${doc.id}', '${test.testName || 'Test'}')">
+                    <a class="btn" style="background:#16a085;color:white;border:none"
+                       href="${getTestResultsPageUrl(doc.id)}"
+                       target="_blank">
                         <i class="bi bi-eye me-2"></i>View Student Results
-                    </button>
+                    </a>
                 </div>
             `;
         }
@@ -217,92 +227,6 @@ async function getResultCount(testId) {
         return snapshot.size;
     } catch (error) {
         return 0;
-    }
-}
-
-// View student results for a test
-window.viewStudentResults = async (testId, testName) => {
-    const modal = new bootstrap.Modal(document.getElementById('studentsModal'));
-    const studentsList = document.getElementById('students-list');
-    
-    studentsList.innerHTML = '<div class="text-center py-4"><div class="spinner-border" style="color:#16a085"></div></div>';
-    modal.show();
-    
-    try {
-        const snapshot = await firestore.collection('results')
-            .where('testId', '==', testId)
-            .get();
-        
-        if (snapshot.empty) {
-            studentsList.innerHTML = '<div class="text-center text-muted py-4">No student results yet</div>';
-            return;
-        }
-
-        const students = await getStudents();
-        console.log("Fetched students for section:", students);
-        let html = '';
-        
-        for (const doc of snapshot.docs) {
-            const result = doc.data();
-            console.log("Processing result for studentId:", result.studentId, "Result data:", result);
-            const student = students.find(s => s.studentId === result.studentId);
-            const studentName = student ? student.name : 'Unknown';
-            const studentPhone = student ? student.phone : '';
-            const score = calculateScore(result);
-            
-            html += `
-                <div class="student-card">
-                    <div>
-                        <h6 class="mb-1">${studentName}</h6>
-                        <small class="text-muted">${result.studentId}</small>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="result-badge ${score >= 70 ? 'correct' : 'wrong'}">${score}%</span>
-                        <a href="report.html?testId=${testId}&studentId=${result.studentId}" 
-                           target="_blank" 
-                           class="btn btn-sm" 
-                           style="background:#2c3e50;color:white;border:none">
-                            <i class="bi bi-file-text"></i> View Report
-                        </a>
-                        <a href="report.html?studentId=${result.studentId}"
-                           target="_blank"
-                           class="btn btn-sm"
-                           style="background:#16a085;color:white;border:none">
-                            <i class="bi bi-graph-up"></i> Progress
-                        </a>
-                        ${studentPhone ? `
-                            <a href="https://wa.me/${studentPhone.replace(/\D/g, '')}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/report.html?testId=${testId}&studentId=${result.studentId}" 
-                               target="_blank" 
-                               class="btn btn-sm" 
-                               style="background:#25D366;color:white;border:none">
-                                <i class="bi bi-whatsapp"></i> Share
-                            </a>
-                        ` : ''}
-                    </div>
-                </div>
-            `;
-        }
-        
-        studentsList.innerHTML = html;
-    } catch (error) {
-        console.error('View results:', error);
-        studentsList.innerHTML = '<div class="text-center text-danger py-4">Error loading results</div>';
-    }
-};
-
-// Get students in the section
-async function getStudents() {
-    try {
-        const snapshot = await firestore.collection('students')
-            .where('sectionId', '==', currentSectionId)
-            .get();
-        
-        return snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-    } catch (error) {
-        return [];
     }
 }
 

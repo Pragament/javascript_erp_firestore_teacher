@@ -646,14 +646,11 @@ function renderStudentProgress(student, studentId, rows) {
 }
 
 function initStudentProgressChart(studentId, rows) {
-    const canvas = document.getElementById("progressChart");
-    if (!canvas || typeof Chart === "undefined") return;
+  const canvas = document.getElementById("progressChart");
+  if (!canvas || typeof Chart === "undefined") return;
 
-    const labels = rows.map((r) => {
-        const d = formatDate(r.dateObj, r.testDateRaw);
-        return `${d} • ${r.testName || r.testId || "Test"}`;
-    });
-    const data = rows.map((r) => Number(r.percent) || 0);
+  const labels = rows.map((r) => formatDate(r.dateObj, r.testDateRaw));
+  const data = rows.map((r) => Number(r.percent) || 0);
 
     const ctx = canvas.getContext("2d");
     const chart = new Chart(ctx, {
@@ -675,10 +672,24 @@ function initStudentProgressChart(studentId, rows) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: { intersect: false, mode: "index" },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          intersect: false,
+          mode: "index",
+          callbacks: {
+            title: (items) => {
+              const row = rows[items?.[0]?.dataIndex];
+              return row?.testName || "Test";
             },
+            label: (item) => {
+              const row = rows[item.dataIndex];
+              const dateLabel = formatDate(row?.dateObj, row?.testDateRaw);
+              return ` ${dateLabel}: ${item.formattedValue}%`;
+            },
+          },
+        },
+      },
             scales: {
                 y: { beginAtZero: true, max: 100, ticks: { callback: (v) => `${v}%` } },
                 x: { ticks: { maxRotation: 0, minRotation: 0 } },
