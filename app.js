@@ -30,6 +30,7 @@ const auth = firebase.auth();
 let currentUser = null;
 let currentSectionId = null;
 let currentSectionName = '';
+let availableSections = [];
 
 // DOM elements
 const elements = {
@@ -39,6 +40,8 @@ const elements = {
     signoutBtn: document.getElementById('signout-btn'),
     userEmail: document.getElementById('user-email'),
     sectionName: document.getElementById('section-name'),
+    sectionSwitcher: document.getElementById('section-switcher'),
+    sectionSelect: document.getElementById('section-select'),
     testsContainer: document.getElementById('tests-container'),
     refreshTests: document.getElementById('refresh-tests')
 };
@@ -73,33 +76,94 @@ elements.signoutBtn.onclick = () => auth.signOut();
 
 // Initialize app after authentication
 async function initializeApp() {
-    await getAssignedSection();
+    await loadAssignedSections();
     if (currentSectionId) {
         await loadTests();
     }
 }
 
-// Get teacher's assigned section
-async function getAssignedSection() {
+function normalizeAssignedSections(snapshot) {
+    const sectionsMap = new Map();
+
+    snapshot.docs.forEach((doc) => {
+        const assignment = doc.data() || {};
+        const sectionIds = Array.isArray(assignment.sectionIds) ? assignment.sectionIds : [];
+        const sectionNames = Array.isArray(assignment.sectionNames) ? assignment.sectionNames : [];
+
+        if (sectionIds.length > 0) {
+            sectionIds.forEach((sectionId, index) => {
+                if (!sectionId || sectionsMap.has(sectionId)) return;
+                sectionsMap.set(sectionId, {
+                    id: sectionId,
+                    name: sectionNames[index] || assignment.sectionName || sectionId
+                });
+            });
+        }
+
+        if (assignment.sectionId && !sectionsMap.has(assignment.sectionId)) {
+            sectionsMap.set(assignment.sectionId, {
+                id: assignment.sectionId,
+                name: assignment.sectionName || assignment.sectionId
+            });
+        }
+    });
+
+    return Array.from(sectionsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function setCurrentSection(sectionId) {
+    const section = availableSections.find((item) => item.id === sectionId) || availableSections[0] || null;
+    currentSectionId = section ? section.id : null;
+    currentSectionName = section ? section.name : '';
+    elements.sectionName.textContent = currentSectionName || 'No section assigned';
+    if (elements.sectionSelect && section) {
+        elements.sectionSelect.value = section.id;
+    }
+}
+
+function renderSectionSwitcher() {
+    if (!elements.sectionSwitcher || !elements.sectionSelect) return;
+
+    if (availableSections.length <= 1) {
+        elements.sectionSwitcher.classList.add('d-none');
+        elements.sectionSelect.innerHTML = '';
+        return;
+    }
+
+    elements.sectionSelect.innerHTML = availableSections.map((section) => `
+        <option value="${section.id}">${section.name}</option>
+    `).join('');
+    elements.sectionSelect.value = currentSectionId;
+    elements.sectionSwitcher.classList.remove('d-none');
+}
+
+// Get teacher's assigned sections
+async function loadAssignedSections() {
     try {
         const snapshot = await firestore.collection('teacherAssignments')
             .where('teacherEmail', '==', currentUser.email)
-            .limit(1)
             .get();
         
         if (snapshot.empty) {
+            availableSections = [];
+            currentSectionId = null;
+            currentSectionName = '';
             elements.sectionName.textContent = 'No section assigned';
             elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are not assigned to any section yet. Contact your school admin.</div>';
+            renderSectionSwitcher();
             return;
         }
 
-        const assignment = snapshot.docs[0].data();
-        currentSectionId = assignment.sectionId;
-        currentSectionName = assignment.sectionName || currentSectionId;
-        elements.sectionName.textContent = currentSectionName;
+        availableSections = normalizeAssignedSections(snapshot);
+        setCurrentSection(currentSectionId || availableSections[0]?.id || null);
+        renderSectionSwitcher();
     } catch (error) {
         console.error('Get section:', error);
         elements.sectionName.textContent = 'Error loading section';
+        availableSections = [];
+        currentSectionId = null;
+        currentSectionName = '';
+        renderSectionSwitcher();
     }
 }
 
@@ -175,11 +239,13 @@ window.viewStudentResults = async (testId, testName) => {
         }
 
         const students = await getStudents();
+        console.log("Fetched students for section:", students);
         let html = '';
         
         for (const doc of snapshot.docs) {
             const result = doc.data();
-            const student = students.find(s => s.id === result.studentId);
+            console.log("Processing result for studentId:", result.studentId, "Result data:", result);
+            const student = students.find(s => s.studentId === result.studentId);
             const studentName = student ? student.name : 'Unknown';
             const studentPhone = student ? student.phone : '';
             const score = calculateScore(result);
@@ -197,6 +263,12 @@ window.viewStudentResults = async (testId, testName) => {
                            class="btn btn-sm" 
                            style="background:#2c3e50;color:white;border:none">
                             <i class="bi bi-file-text"></i> View Report
+                        </a>
+                        <a href="report.html?studentId=${result.studentId}"
+                           target="_blank"
+                           class="btn btn-sm"
+                           style="background:#16a085;color:white;border:none">
+                            <i class="bi bi-graph-up"></i> Progress
                         </a>
                         ${studentPhone ? `
                             <a href="https://wa.me/${studentPhone.replace(/\D/g, '')}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/report.html?testId=${testId}&studentId=${result.studentId}" 
@@ -234,22 +306,12 @@ async function getStudents() {
     }
 }
 
-// Calculate score from result data
-function calculateScore(result) {
-    let correct = 0;
-    let total = 0;
-    
-    for (let key in result) {
-        if (key.startsWith('Q')) {
-            total++;
-            if (result[key] === 'R') {
-                correct++;
-            }
-        }
-    }
-    
-    return total > 0 ? Math.round((correct / total) * 100) : 0;
-}
-
 // Refresh tests
 elements.refreshTests.onclick = () => loadTests();
+elements.sectionSelect.onchange = async (event) => {
+    const nextSectionId = event.target.value;
+    if (!nextSectionId || nextSectionId === currentSectionId) return;
+    setCurrentSection(nextSectionId);
+    elements.testsContainer.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-success"></div><p class="mt-2 text-muted">Loading tests...</p></div>';
+    await loadTests();
+};

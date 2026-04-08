@@ -39,9 +39,15 @@
         </nav>
 
         <div class="container-fluid py-4">
-            <div id="section-info" class="alert mb-4" style="background: #e8f5f1; border: 1px solid #16a085; color: #16a085;">
-                <i class="bi bi-info-circle me-2"></i>
-                <strong>Your Section:</strong> <span id="section-name">Loading...</span>
+            <div id="section-info" class="alert mb-4 d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3" style="background: #e8f5f1; border: 1px solid #16a085; color: #16a085;">
+                <div>
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Your Section:</strong> <span id="section-name">Loading...</span>
+                </div>
+                <div id="section-switcher" class="d-none d-flex align-items-center gap-2">
+                    <label for="section-select" class="fw-semibold mb-0">Change Section</label>
+                    <select id="section-select" class="form-select form-select-sm" style="min-width: 220px;"></select>
+                </div>
             </div>
 
             <div class="row g-4">
@@ -85,6 +91,7 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="utils.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

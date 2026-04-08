@@ -1,13 +1,541 @@
-// Obfuscated config
-const _x=['edutrack-admin','firebaseapp','AIzaSyAFpwi3k7Qth9MiqqRGKstY0Zkj_vrcdFY','193864081571','1:193864081571:web:7501afde01291f81e61f16','com','storage','app'];
-const _c={a:_x[2],b:_x[0]+'.'+_x[1]+'.'+_x[5],c:_x[0],d:_x[0]+'.'+_x[1]+_x[6]+'.'+_x[7],e:_x[3],f:_x[4]};
-firebase.initializeApp({apiKey:_c.a,authDomain:_c.b,projectId:_c.c,storageBucket:_c.d,messagingSenderId:_c.e,appId:_c.f});
+// Firebase Configuration
+const firebaseConfigParts = [
+  "edutrack-admin",
+  "firebaseapp",
+  "AIzaSyAFpwi3k7Qth9MiqqRGKstY0Zkj_vrcdFY",
+  "193864081571",
+  "1:193864081571:web:7501afde01291f81e61f16",
+  "com",
+  "storage",
+  "app",
+];
 
-const _db=firebase.firestore();
-const _rc=document.getElementById('report-content');
+const firebaseConfig = {
+  apiKey: firebaseConfigParts[2],
+  authDomain:
+    firebaseConfigParts[0] +
+    "." +
+    firebaseConfigParts[1] +
+    "." +
+    firebaseConfigParts[5],
+  projectId: firebaseConfigParts[0],
+  storageBucket:
+    firebaseConfigParts[0] +
+    "." +
+    firebaseConfigParts[1] +
+    firebaseConfigParts[6] +
+    "." +
+    firebaseConfigParts[7],
+  messagingSenderId: firebaseConfigParts[3],
+  appId: firebaseConfigParts[4],
+};
 
-async function _load(){const params=new URLSearchParams(window.location.search);const tid=params.get('testId'),sid=params.get('studentId');if(!tid||!sid){_rc.innerHTML='<div class="alert alert-danger">Invalid report link</div>';return}try{const[test,result,student]=await Promise.all([_db.collection('tests').doc(tid).get(),_db.collection('results').where('testId','==',tid).where('studentId','==',sid).limit(1).get(),_db.collection('students').doc(sid).get()]);if(!test.exists||result.empty||!student.exists){_rc.innerHTML='<div class="alert alert-warning">Data not found</div>';return}const td=test.data(),rd=result.docs[0].data(),sd=student.data();_render(td,rd,sd)}catch(e){console.error('Load error:',e);_rc.innerHTML='<div class="alert alert-danger">Error loading report</div>'}}
+// Initialize Firebase (safe if this page is opened multiple times in the same context)
+if (!firebase.apps || firebase.apps.length === 0) {
+  firebase.initializeApp(firebaseConfig);
+}
 
-function _render(test,result,student){const qs=test.questions||[];let correct=0,total=0;let qhtml='';qs.forEach((q,i)=>{const qn=i+1;const uk=`Q${qn}`;const ua=result[uk];total++;const isC=ua==='R';if(isC)correct++;const opts=[q['Option 1'],q['Option 2'],q['Option 3'],q['Option 4']];const ca=parseInt(q['Correct Option'])||0;qhtml+=`<div class="question-item"><div class="d-flex justify-content-between mb-3"><h6 class="fw-bold">Question ${qn}</h6><span class="badge ${isC?'bg-success':'bg-danger'}">${isC?'Correct':'Wrong'}</span></div><p class="mb-3">${q.Question||'No question text'}</p>`;opts.forEach((opt,idx)=>{if(!opt)return;const oi=idx+1;const isCO=oi===ca;const isUA=ua===String(oi);let cls='option-neutral';if(isCO&&isUA)cls='option-correct';else if(isCO)cls='option-correct';else if(isUA)cls='option-wrong';qhtml+=`<div class="option-box ${cls}"><strong>${String.fromCharCode(65+idx)}.</strong> ${opt}${isCO?' ✓':''}${isUA&&!isCO?' ✗':''}</div>`});qhtml+='</div>'});const score=total>0?Math.round(correct/total*100):0;_rc.innerHTML=`<div class="card shadow-sm mb-4"><div class="card-body"><div class="row"><div class="col-md-6"><h5 class="fw-bold mb-3">Student Information</h5><p><strong>Name:</strong> ${student.name||'N/A'}</p><p><strong>Student ID:</strong> ${student.id||result.studentId}</p><p><strong>Phone:</strong> ${student.phone||'N/A'}</p></div><div class="col-md-6"><h5 class="fw-bold mb-3">Test Information</h5><p><strong>Test:</strong> ${test.testName||'N/A'}</p><p><strong>Score:</strong> <span class="badge ${score>=70?'bg-success':'bg-danger'} fs-6">${correct}/${total} (${score}%)</span></p></div></div></div></div><h5 class="fw-bold mb-3">Detailed Results</h5>${qhtml}`}
+const firestore = firebase.firestore();
+const reportContentEl = document.getElementById("report-content");
 
-_load();
+function setReportHtml(html) {
+  reportContentEl.innerHTML = html;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function showReportError(message) {
+  setReportHtml(`<div class="alert alert-danger">${message}</div>`);
+}
+
+function showReportWarning(message) {
+  setReportHtml(`<div class="alert alert-warning">${message}</div>`);
+}
+
+function showLoading(message) {
+  setReportHtml(`
+    <div class="text-center py-5">
+      <div class="spinner-border" style="color:#2c3e50"></div>
+      <p class="mt-2">${escapeHtml(message || "Loading...")}</p>
+    </div>
+  `);
+}
+
+function parseDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value?.toDate === "function") return value.toDate();
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    let match = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+
+    // DD-MM-YYYY or DD/MM/YYYY
+    match = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (match) return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
+}
+
+function formatDate(dateObj, fallback) {
+  if (dateObj && !Number.isNaN(dateObj.getTime())) {
+    return dateObj.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  }
+  return fallback || "N/A";
+}
+
+async function getStudentByStudentId(studentId) {
+  const studentSnap = await firestore
+    .collection("students")
+    .where("studentId", "==", studentId)
+    .limit(1)
+    .get();
+
+  if (studentSnap.empty) return null;
+  const doc = studentSnap.docs[0];
+  return { id: doc.id, ...doc.data() };
+}
+
+async function fetchTestsByIds(testIds) {
+  const uniqueIds = [...new Set((testIds || []).filter(Boolean))];
+  const testsById = new Map();
+  if (uniqueIds.length === 0) return testsById;
+
+  // Prefer batched "in" queries (max 10 ids per query)
+  try {
+    const chunkSize = 10;
+    for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+      const chunk = uniqueIds.slice(i, i + chunkSize);
+      const snap = await firestore
+        .collection("tests")
+        .where(firebase.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      snap.forEach((doc) => testsById.set(doc.id, doc.data()));
+    }
+    return testsById;
+  } catch (err) {
+    console.warn("Batched test fetch failed, falling back to per-doc fetch:", err);
+  }
+
+  const snaps = await Promise.all(uniqueIds.map((id) => firestore.collection("tests").doc(id).get()));
+  for (const snap of snaps) {
+    if (snap.exists) testsById.set(snap.id, snap.data());
+  }
+  return testsById;
+}
+
+async function loadSingleTestReport(testId, studentId) {
+  showLoading("Loading report...");
+  const [testSnap, resultSnap, studentSnap] = await Promise.all([
+    firestore.collection("tests").doc(testId).get(),
+    firestore
+      .collection("results")
+      .where("testId", "==", testId)
+      .where("studentId", "==", studentId)
+      .limit(1)
+      .get(),
+    firestore.collection("students").where("studentId", "==", studentId).limit(1).get(),
+  ]);
+
+  if (!testSnap.exists || resultSnap.empty || studentSnap.empty) {
+    showReportWarning("Data not found");
+    return;
+  }
+
+  const test = testSnap.data();
+  const result = resultSnap.docs[0].data();
+  const studentDoc = studentSnap.docs[0];
+  const student = { id: studentDoc.id, ...studentDoc.data() };
+
+  renderSingleTestReport(test, result, student, studentId, testId);
+}
+
+async function loadStudentProgressReport(studentId) {
+  showLoading("Loading student progress...");
+
+  const [student, resultsSnap] = await Promise.all([
+    getStudentByStudentId(studentId),
+    firestore.collection("results").where("studentId", "==", studentId).get(),
+  ]);
+
+  if (!student) {
+    showReportWarning("Student not found");
+    return;
+  }
+
+  if (resultsSnap.empty) {
+    setReportHtml(`
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h5 class="fw-bold mb-3">Student Information</h5>
+          <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
+          <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId)}</p>
+          <p><strong>Phone:</strong> ${escapeHtml(student.phone || "N/A")}</p>
+        </div>
+      </div>
+      <div class="alert alert-warning">No test results found for this student.</div>
+    `);
+    return;
+  }
+
+  const results = resultsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const testIds = results.map((r) => r.testId).filter(Boolean);
+  const testsById = await fetchTestsByIds(testIds);
+
+  const rows = [];
+  for (const result of results) {
+    const testId = result.testId;
+    const test = testsById.get(testId) || {};
+
+    const scoreDetails = typeof calculateScoreDetails === "function"
+      ? calculateScoreDetails(result)
+      : { percent: calculateScore(result), correct: null, total: null };
+
+    const dateObj = parseDate(test.testDate);
+    rows.push({
+      testId,
+      testName: test.testName || result.testName || testId || "Test",
+      testDateRaw: test.testDate || "",
+      dateObj,
+      percent: scoreDetails.percent,
+      correct: scoreDetails.correct,
+      total: scoreDetails.total,
+    });
+  }
+
+  // Sort by date (oldest -> newest). Unknown dates go last.
+  rows.sort((a, b) => {
+    const at = a.dateObj?.getTime?.();
+    const bt = b.dateObj?.getTime?.();
+    const aValid = typeof at === "number" && !Number.isNaN(at);
+    const bValid = typeof bt === "number" && !Number.isNaN(bt);
+    if (aValid && bValid) return at - bt;
+    if (aValid) return -1;
+    if (bValid) return 1;
+    return String(a.testName).localeCompare(String(b.testName));
+  });
+
+  renderStudentProgress(student, studentId, rows);
+}
+
+async function loadReportFromQueryParams() {
+  const params = new URLSearchParams(window.location.search);
+  const testId = params.get("testId");
+  const studentId = params.get("studentId");
+
+  if (!studentId) {
+    showReportError("Invalid report link");
+    return;
+  }
+
+  try {
+    if (testId) {
+      await loadSingleTestReport(testId, studentId);
+    } else {
+      await loadStudentProgressReport(studentId);
+    }
+  } catch (err) {
+    console.error("Load error:", err);
+    showReportError("Error loading report");
+  }
+}
+
+function renderSingleTestReport(test, result, student, studentId, testId) {
+    let questions = test.questions || [];
+    let correct = 0;
+    let total = 0;
+    let questionsHtml = "";
+
+    if (!questions || questions.length === 0) {
+    questions = [];
+    
+    for (let key in result) {
+        if (key.includes('_Q')) {
+            const match = key.match(/(.+)_Q(\d+)/);
+            if (match) {
+                const [, section, qNum] = match;
+                const questionNumber = parseInt(qNum, 10);
+                const isCorrect = result[key] === "R";
+                
+                questions[questionNumber - 1] = {
+                    questionNumber: questionNumber,
+                    section: section,
+                    isCorrect: isCorrect,
+                    //Question: `${section} Question ${questionNumber}`,
+                };
+            }
+        }
+    }
+    
+    // Remove undefined entries and sort
+    questions = questions.filter(q => q !== undefined);
+}
+  questions.forEach((question, index) => {
+    const questionNumber = index + 1;
+    const userKey = `Q${questionNumber}`;
+    const userAnswer = result[userKey];
+
+    total += 1;
+    const isCorrect = question.isCorrect || userAnswer === "R";
+    if (isCorrect) correct += 1;
+
+    const options = [
+      question["Option 1"],
+      question["Option 2"],
+      question["Option 3"],
+      question["Option 4"],
+    ];
+
+    const correctOption = parseInt(question["Correct Option"], 10) || 0;
+
+    questionsHtml += `
+      <div class="question-item">
+        <div class="d-flex justify-content-between mb-3">
+          <h6 class="fw-bold">Question ${questionNumber}</h6>
+          <span class="badge ${isCorrect ? "bg-success" : "bg-danger"}">
+            ${isCorrect ? "Correct" : "Wrong"}
+          </span>
+        </div>
+        ${question.Question?.trim() 
+  ? `<p class="mb-3">${question.Question}</p>` 
+  : ""}
+    `;
+
+    options.forEach((opt, optionIndex) => {
+      if (!opt) return;
+
+      const optionNumber = optionIndex + 1;
+      const isCorrectOption = optionNumber === correctOption;
+      const isUserAnswer = userAnswer === String(optionNumber);
+
+      let className = "option-neutral";
+      if (isCorrectOption) className = "option-correct";
+      else if (isUserAnswer) className = "option-wrong";
+
+      questionsHtml += `
+        <div class="option-box ${className}">
+          <strong>${String.fromCharCode(65 + optionIndex)}.</strong>
+          ${opt}
+          ${isCorrectOption ? " ✓" : ""}
+          ${isUserAnswer && !isCorrectOption ? " ✗" : ""}
+        </div>
+      `;
+    });
+
+    questionsHtml += "</div>";
+  });
+
+  const scorePercent = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const scoreBadgeClass = scorePercent >= 70 ? "bg-success" : "bg-danger";
+
+  setReportHtml(`
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <h5 class="fw-bold mb-3">Student Information</h5>
+            <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
+            <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId || result.studentId || "N/A")}</p>
+            <p><strong>Phone:</strong> ${escapeHtml(student.phone || "N/A")}</p>
+          </div>
+          <div class="col-md-6">
+            <h5 class="fw-bold mb-3">Test Information</h5>
+            <p><strong>Test:</strong> ${escapeHtml(test.testName || "N/A")}</p>
+            <p>
+              <strong>Score:</strong>
+              <span class="badge ${scoreBadgeClass} fs-6">
+                ${correct}/${total} (${scorePercent}%)
+              </span>
+            </p>
+            <p class="mt-2 mb-0">
+              <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
+                 href="report.html?testId=${encodeURIComponent(testId)}&studentId=${encodeURIComponent(studentId)}" target="_blank">
+                Open Link
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <h5 class="fw-bold mb-3">Detailed Results</h5>
+    ${questionsHtml}
+  `);
+}
+
+function renderStudentProgress(student, studentId, rows) {
+  const taken = rows.length;
+  const avg = taken > 0 ? Math.round(rows.reduce((sum, r) => sum + (Number(r.percent) || 0), 0) / taken) : 0;
+  const best = taken > 0 ? Math.max(...rows.map((r) => Number(r.percent) || 0)) : 0;
+  const latest = taken > 0 ? (Number(rows[taken - 1].percent) || 0) : 0;
+
+  const tableRowsHtml = rows
+    .map((r) => {
+      const displayDate = formatDate(r.dateObj, r.testDateRaw);
+      const reportHref = `report.html?testId=${encodeURIComponent(r.testId)}&studentId=${encodeURIComponent(studentId)}`;
+      const badgeClass = (Number(r.percent) || 0) >= 70 ? "bg-success" : "bg-danger";
+      const correctText =
+        typeof r.correct === "number" && typeof r.total === "number"
+          ? `${r.correct}/${r.total}`
+          : "—";
+
+      return `
+        <tr>
+          <td>${escapeHtml(displayDate)}</td>
+          <td>${escapeHtml(r.testName || "Test")}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(r.percent)}%</span></td>
+          <td>${escapeHtml(correctText)}</td>
+          <td>
+            <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none" href="${reportHref}" target="_blank">
+              View
+            </a>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  setReportHtml(`
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <h5 class="fw-bold mb-3">Student Information</h5>
+            <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
+            <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId)}</p>
+            <p><strong>Phone:</strong> ${escapeHtml(student.phone || "N/A")}</p>
+          </div>
+          <div class="col-md-6">
+            <h5 class="fw-bold mb-3">Progress Summary</h5>
+            <p><strong>Tests Taken:</strong> ${escapeHtml(taken)}</p>
+            <p><strong>Average Score:</strong> ${escapeHtml(avg)}%</p>
+            <p><strong>Best Score:</strong> ${escapeHtml(best)}%</p>
+            <p class="mb-0"><strong>Latest Score:</strong> ${escapeHtml(latest)}%</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-bold mb-0">Score Progress</h5>
+          <small class="text-muted">Click a point to open that test report</small>
+        </div>
+        <div style="height:320px">
+          <canvas id="progressChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="fw-bold mb-3">All Tests</h5>
+        <div class="table-responsive">
+          <table id="testsTable" class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Test</th>
+                <th>Score</th>
+                <th>Correct</th>
+                <th>Report</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `);
+
+  initStudentProgressChart(studentId, rows);
+  initResultsTable();
+}
+
+function initStudentProgressChart(studentId, rows) {
+  const canvas = document.getElementById("progressChart");
+  if (!canvas || typeof Chart === "undefined") return;
+
+  const labels = rows.map((r) => {
+    const d = formatDate(r.dateObj, r.testDateRaw);
+    return `${d} • ${r.testName || r.testId || "Test"}`;
+  });
+  const data = rows.map((r) => Number(r.percent) || 0);
+
+  const ctx = canvas.getContext("2d");
+  const chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Score (%)",
+          data,
+          borderColor: "#2c3e50",
+          backgroundColor: "rgba(44, 62, 80, 0.15)",
+          pointBackgroundColor: "#16a085",
+          tension: 0.25,
+          fill: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { intersect: false, mode: "index" },
+      },
+      scales: {
+        y: { beginAtZero: true, max: 100, ticks: { callback: (v) => `${v}%` } },
+        x: { ticks: { maxRotation: 0, minRotation: 0 } },
+      },
+      onClick: (evt, elements) => {
+        if (!elements || elements.length === 0) return;
+        const index = elements[0].index;
+        const row = rows[index];
+        if (!row?.testId) return;
+        const href = `report.html?testId=${encodeURIComponent(row.testId)}&studentId=${encodeURIComponent(studentId)}`;
+        window.open(href, "_blank");
+      },
+    },
+  });
+
+  // Avoid linter unused warnings in some bundlers
+  window.__studentProgressChart = chart;
+}
+
+function initResultsTable() {
+  const table = document.getElementById("testsTable");
+  if (!table) return;
+  if (window.simpleDatatables?.DataTable) {
+    // eslint-disable-next-line no-new
+    new window.simpleDatatables.DataTable(table, {
+      searchable: true,
+      fixedHeight: true,
+      perPage: 10,
+    });
+  }
+}
+
+loadReportFromQueryParams();
