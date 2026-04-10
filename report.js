@@ -87,6 +87,26 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function escapeCSV(value) {
+  const str = String(value ?? "");
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function downloadCSV(filename, rows) {
+  const csvContent = rows.map(row => row.map(escapeCSV).join(",")).join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
 function showReportError(message) {
   setReportHtml(`<div class="alert alert-danger">${message}</div>`);
 }
@@ -389,6 +409,753 @@ async function loadReportFromQueryParams() {
   }
 }
 
+let currentTestQuestionsData = [];
+let currentSingleTestAIContext = null;
+let reportAIChatPanel = null;
+
+function buildCurrentTestSummaryData() {
+  const summaryMap = new Map();
+
+  currentTestQuestionsData.forEach((q) => {
+    const key = `${q.subject}|${q.topic}`;
+    if (!summaryMap.has(key)) {
+      summaryMap.set(key, {
+        subject: q.subject || "General",
+        topic: q.topic || "General",
+        correct: 0,
+        wrong: 0,
+        total: 0,
+        subtopics: new Set(),
+      });
+    }
+
+    const entry = summaryMap.get(key);
+    entry.total += 1;
+    if (q.isCorrect) entry.correct += 1;
+    else entry.wrong += 1;
+    if (q.subtopic) entry.subtopics.add(q.subtopic);
+  });
+
+  return Array.from(summaryMap.values())
+    .map((entry) => ({
+      ...entry,
+      accuracy: entry.total > 0 ? Math.round((entry.correct / entry.total) * 100) : 0,
+      subtopics: Array.from(entry.subtopics),
+    }))
+    .sort((a, b) => {
+      if (b.wrong !== a.wrong) return b.wrong - a.wrong;
+      if (a.accuracy !== b.accuracy) return a.accuracy - b.accuracy;
+      return `${a.subject} ${a.topic}`.localeCompare(`${b.subject} ${b.topic}`);
+    });
+}
+
+function buildSingleTestAIContext({ test, student, correct, total, scorePercent }) {
+  const summaryRows = buildCurrentTestSummaryData();
+  console.log("Built summary rows for AI context:", summaryRows);
+  const weakTopics = summaryRows.filter((row) => row.wrong > 0);
+
+  const summaryText = summaryRows.length
+    ? summaryRows
+      .map((row) => {
+        const subtopicText = row.subtopics.length ? `; subtopics: ${row.subtopics.join(", ")}` : "";
+        //return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}, accuracy ${row.accuracy}%${subtopicText}`;
+        return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}`;
+      })
+      .join("\n")
+    : "No summary rows available.";
+
+  const weakTopicsText = weakTopics.length
+    ? weakTopics
+      .map((row, index) => `${index + 1}. ${row.subject} > ${row.topic} - wrong ${row.wrong}/${row.total}, accuracy ${row.accuracy}%`)
+      .join("\n")
+    : "No weak topics detected. The student got every tracked topic correct.";
+
+  const detailText = currentTestQuestionsData.length
+    ? currentTestQuestionsData
+      .map((q) => `Q${q.questionNumber} | Subject: ${q.subject || "General"} | Topic: ${q.topic || "General"} | Subtopic: ${q.subtopic || "General"} | Result: ${q.isCorrect ? "Correct" : "Wrong"} | Question: ${q.questionText || "N/A"}`)
+      .join("\n")
+    : "No detailed question data available.";
+
+    console.log("Built AI context:", {
+      testName: test?.testName,
+      studentName: student?.name,
+      scorePercent,
+      correct,
+      total,
+      summaryRows,
+      weakTopics,
+      summaryText,
+      weakTopicsText,
+      detailText,
+    });
+  return {
+    testName: test?.testName || "Test",
+    studentName: student?.name || "Student",
+    scorePercent,
+    correct,
+    total,
+    summaryRows,
+    weakTopics,
+    summaryText,
+    weakTopicsText,
+    detailText,
+    contextText: [
+      /*`Student: ${student?.name || "Student"}`,
+      `Test: ${test?.testName || "Test"}`,
+      `Score: ${correct}/${total} (${scorePercent}%)`,
+      "",
+      "Topic Summary:",*/
+      summaryText,
+      "",
+     /* "Weak Topics:",
+      weakTopicsText,
+      "",
+      "Question Details:",
+      detailText,*/
+    ].join("\n"),
+  };
+}
+
+class ReportAIChatPanel {
+  constructor() {
+    this.engine = null;
+    this.messages = [];
+    this.isLoading = false;
+    this.isReady = false;
+    this.modelCacheStatus = {};
+    this.currentQuizQuestions = [];
+    this.activeQuizQuestion = null;
+    this.activeQuizIndex = null;
+
+    this.container = document.getElementById("aiChatContainer");
+    this.fab = document.getElementById("aiChatFab");
+    this.header = document.getElementById("aiChatHeader");
+    this.toggleBtn = document.getElementById("aiChatToggle");
+    this.clearBtn = document.getElementById("aiChatClear");
+    this.messagesEl = document.getElementById("aiChatMessages");
+    this.inputEl = document.getElementById("aiChatInput");
+    this.sendBtn = document.getElementById("aiChatSend");
+    this.statusText = document.getElementById("aiStatusText");
+    this.statusIndicator = document.getElementById("aiStatusIndicator");
+    this.modelSelect = document.getElementById("aiModelSelect");
+    this.loadBtn = document.getElementById("aiLoadModel");
+    this.deleteBtn = document.getElementById("aiDeleteModel");
+    this.progressContainer = document.getElementById("aiProgressContainer");
+    this.progressFill = document.getElementById("aiProgressFill");
+    this.progressText = document.getElementById("aiProgressText");
+    this.quickActions = document.getElementById("aiQuickActions");
+    this.quizContainer = document.getElementById("aiChatQuiz");
+    this.quizHeader = document.getElementById("aiQuizHeader");
+    this.quizGenerateBtn = document.getElementById("aiQuizGenerate");
+    this.quizQuestions = document.getElementById("aiQuizQuestions");
+    this.helpContainer = document.getElementById("aiChatHelp");
+    this.helpHeader = document.getElementById("aiHelpHeader");
+    this.chatInputArea = document.getElementById("aiChatInputArea");
+
+    this.bindEvents();
+    this.checkModelCacheStatus();
+    this.refreshContextState();
+  }
+
+  bindEvents() {
+    if (this.header) {
+      this.header.addEventListener("click", (e) => {
+        if (!e.target.closest("button")) this.toggleChat();
+      });
+    }
+    if (this.toggleBtn) this.toggleBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleChat();
+    });
+    if (this.fab) this.fab.addEventListener("click", () => this.openChat());
+    if (this.clearBtn) this.clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.clearChat();
+    });
+    if (this.loadBtn) this.loadBtn.addEventListener("click", () => this.loadModel());
+    if (this.deleteBtn) this.deleteBtn.addEventListener("click", () => this.deleteModel());
+    if (this.modelSelect) this.modelSelect.addEventListener("change", () => this.updateDeleteButtonVisibility());
+    if (this.sendBtn) this.sendBtn.addEventListener("click", () => this.sendMessage());
+    if (this.inputEl) {
+      this.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          this.sendMessage();
+        }
+      });
+      this.inputEl.addEventListener("input", () => {
+        this.inputEl.style.height = "auto";
+        this.inputEl.style.height = `${Math.min(this.inputEl.scrollHeight, 120)}px`;
+      });
+    }
+    document.querySelectorAll(".ai-chat-quick-btn[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => this.handleQuickAction(btn.dataset.action));
+    });
+    document.querySelectorAll(".ai-sample-btn").forEach((btn) => {
+      btn.addEventListener("click", () => this.useSamplePrompt(btn.dataset.prompt || ""));
+    });
+    if (this.helpHeader && this.helpContainer) {
+      this.helpHeader.addEventListener("click", () => this.helpContainer.classList.toggle("collapsed"));
+    }
+    if (this.quizHeader && this.quizContainer) {
+      this.quizHeader.addEventListener("click", () => this.quizContainer.classList.toggle("collapsed"));
+    }
+    if (this.quizGenerateBtn) {
+      this.quizGenerateBtn.addEventListener("click", () => this.generateQuizQuestions());
+    }
+  }
+
+  getCurrentReportContext() {
+    return currentSingleTestAIContext;
+  }
+
+  refreshContextState() {
+    const context = this.getCurrentReportContext();
+    if (!context) {
+      this.updateStatus("error", "Open a single test report to use AI study help");
+      this.disableInteractions();
+      this.messagesEl.innerHTML = `
+        <div class="ai-chat-message ai">
+          <div class="message-bubble markdown-content">This AI panel is ready for single test reports. Open a report with both \`testId\` and \`studentId\`, then load a model.</div>
+          <span class="message-time">Just now</span>
+        </div>
+      `;
+      return;
+    }
+
+    if (!this.isReady) {
+      this.updateStatus("ready", `Report ready: ${context.studentName} scored ${context.scorePercent}%`);
+    }
+
+    if (this.messages.length === 0) {
+      this.clearChat();
+    }
+  }
+
+  disableInteractions() {
+    if (this.inputEl) this.inputEl.disabled = true;
+    if (this.sendBtn) this.sendBtn.disabled = true;
+    if (this.quizGenerateBtn) this.quizGenerateBtn.disabled = true;
+    if (this.quickActions) this.quickActions.style.display = "none";
+    if (this.chatInputArea) this.chatInputArea.style.display = "none";
+    document.querySelectorAll(".ai-sample-btn").forEach((btn) => { btn.disabled = true; });
+  }
+
+  enableInteractions() {
+    if (this.inputEl) this.inputEl.disabled = false;
+    if (this.sendBtn) this.sendBtn.disabled = false;
+    if (this.quizGenerateBtn) this.quizGenerateBtn.disabled = false;
+    if (this.quickActions) this.quickActions.style.display = "flex";
+    if (this.chatInputArea) this.chatInputArea.style.display = "block";
+    document.querySelectorAll(".ai-sample-btn").forEach((btn) => { btn.disabled = false; });
+  }
+
+  buildSystemPrompt(context) {
+    return [
+      "You are an AI learning assistant helping a student review a completed test report.",
+      "Use the report summary and question detail below to answer questions, create markdown study material, and generate practice quizzes.",
+      "Prioritize the student's weak topics and wrong answers.",
+      "Be encouraging, concrete, and educational.",
+      "If you create study material, use markdown headings, bullet points, and short examples.",
+      "",
+      "Current report context:",
+      context.contextText.substring(0, 12000),
+    ].join("\n");
+  }
+
+  async loadModel() {
+    const context = this.getCurrentReportContext();
+    if (!context) {
+      this.addMessage("ai", "Open a single test report first so I can use its summary and detailed results.");
+      return;
+    }
+
+    if (!navigator.gpu) {
+      this.showError("WebGPU is not supported in this browser. Please use a recent Chrome or Edge build.");
+      this.updateStatus("error", "WebGPU not supported");
+      return;
+    }
+
+    if (typeof window.CreateMLCEngine === "undefined") {
+      this.showError("WebLLM library is not available. Please check your internet connection and refresh.");
+      this.updateStatus("error", "WebLLM unavailable");
+      return;
+    }
+
+    const modelId = this.modelSelect.value;
+    this.loadBtn.disabled = true;
+    this.modelSelect.disabled = true;
+    this.progressContainer.classList.add("active");
+    this.progressFill.style.width = "0%";
+    this.progressText.textContent = "0%";
+    this.addMessage("ai", `Loading ${modelId}. First-time setup can take a few minutes.`);
+
+    try {
+      this.engine = await window.CreateMLCEngine(modelId, {
+        initProgressCallback: (progress) => {
+          const percent = Math.round((progress.progress || 0) * 100);
+          this.progressFill.style.width = `${percent}%`;
+          this.progressText.textContent = `${percent}%`;
+          this.updateStatus("loading", `Loading model... ${percent}%`);
+        },
+      });
+
+      this.isReady = true;
+      this.messages = [{
+        role: "system",
+        content: this.buildSystemPrompt(context),
+      }];
+      this.progressContainer.classList.remove("active");
+      this.enableInteractions();
+      this.updateStatus("ready", `AI ready for ${context.studentName}'s ${context.testName}`);
+      this.addMessage("ai", "Model loaded. You can ask for weak-topic notes, markdown study material, or practice quizzes based on this report.");
+      this.checkModelCacheStatus();
+    } catch (error) {
+      console.error("Failed to load model:", error);
+      this.progressContainer.classList.remove("active");
+      this.updateStatus("error", "Failed to load model");
+      this.addMessage("ai", `Error loading model: ${error.message || "Unknown error"}`);
+    } finally {
+      this.loadBtn.disabled = false;
+      this.modelSelect.disabled = false;
+    }
+  }
+
+  async checkModelCacheStatus() {
+    if (!("caches" in window) || !this.modelSelect) return;
+
+    try {
+      const cacheNames = await caches.keys();
+      const modelCacheNames = cacheNames.filter((name) => name.includes("webllm") || name.includes("mlc"));
+
+      Array.from(this.modelSelect.options).forEach((option) => {
+        option.textContent = option.textContent.replace(/^[✓↓]\s*/, "");
+      });
+
+      for (const option of this.modelSelect.options) {
+        const modelId = option.value;
+        let downloaded = false;
+
+        for (const cacheName of modelCacheNames) {
+          const cache = await caches.open(cacheName);
+          const requests = await cache.keys();
+          if (requests.some((request) => request.url.includes(modelId))) {
+            downloaded = true;
+            break;
+          }
+        }
+
+        this.modelCacheStatus[modelId] = downloaded;
+        option.textContent = `${downloaded ? "✓" : "↓"} ${option.textContent.replace(/^[✓↓]\s*/, "")}`;
+      }
+
+      this.updateDeleteButtonVisibility();
+    } catch (error) {
+      console.error("Error checking model cache:", error);
+    }
+  }
+
+  updateDeleteButtonVisibility() {
+    if (!this.deleteBtn || !this.modelSelect) return;
+    const downloaded = this.modelCacheStatus[this.modelSelect.value];
+    this.deleteBtn.style.display = downloaded ? "inline-flex" : "none";
+  }
+
+  async deleteModel() {
+    const modelId = this.modelSelect.value;
+    if (!confirm(`Delete ${modelId} from local cache?`)) return;
+
+    this.deleteBtn.disabled = true;
+    try {
+      const cacheNames = await caches.keys();
+      const modelCacheNames = cacheNames.filter((name) => name.includes("webllm") || name.includes("mlc"));
+
+      for (const cacheName of modelCacheNames) {
+        const cache = await caches.open(cacheName);
+        const requests = await cache.keys();
+        for (const request of requests) {
+          if (request.url.includes(modelId)) {
+            await cache.delete(request);
+          }
+        }
+      }
+
+      this.modelCacheStatus[modelId] = false;
+      this.updateDeleteButtonVisibility();
+      this.addMessage("ai", `${modelId} was removed from local cache.`);
+
+      if (this.isReady) {
+        this.isReady = false;
+        this.engine = null;
+        this.disableInteractions();
+        this.updateStatus("ready", "Model removed. Load a model to continue.");
+      }
+      this.checkModelCacheStatus();
+    } catch (error) {
+      console.error("Delete model error:", error);
+      this.addMessage("ai", `Error deleting model: ${error.message}`);
+    } finally {
+      this.deleteBtn.disabled = false;
+    }
+  }
+
+  updateStatus(state, text) {
+    if (this.statusText) this.statusText.textContent = text;
+    if (this.statusIndicator) this.statusIndicator.className = `status-indicator ${state}`;
+  }
+
+  openChat() {
+    this.container.classList.remove("collapsed");
+    this.fab.classList.add("hidden");
+    if (this.isReady) this.inputEl.focus();
+  }
+
+  closeChat() {
+    this.container.classList.add("collapsed");
+    this.fab.classList.remove("hidden");
+  }
+
+  toggleChat() {
+    if (this.container.classList.contains("collapsed")) this.openChat();
+    else this.closeChat();
+  }
+
+  clearChat() {
+    const context = this.getCurrentReportContext();
+    this.currentQuizQuestions = [];
+    this.activeQuizQuestion = null;
+    this.activeQuizIndex = null;
+    if (this.quizQuestions) this.quizQuestions.innerHTML = "";
+
+    if (context && this.isReady) {
+      this.messages = [{
+        role: "system",
+        content: this.buildSystemPrompt(context),
+      }];
+      this.messagesEl.innerHTML = `
+        <div class="ai-chat-message ai">
+          <div class="message-bubble markdown-content">Chat cleared. I still have this report loaded, including topic summary, weak areas, and question detail. What would you like to study?</div>
+          <span class="message-time">Just now</span>
+        </div>
+      `;
+      return;
+    }
+
+    this.messages = [];
+    this.messagesEl.innerHTML = `
+      <div class="ai-chat-message ai">
+        <div class="message-bubble markdown-content">${context
+          ? "This report is ready. Load a model to start asking about weak topics and revision material."
+          : "Open a single test report first, then load a model to start."}</div>
+        <span class="message-time">Just now</span>
+      </div>
+    `;
+  }
+
+  handleQuickAction(action) {
+    if (!this.isReady) {
+      this.addMessage("ai", "Load a model first so I can work with this report.");
+      return;
+    }
+
+    const context = this.getCurrentReportContext();
+    if (!context) {
+      this.addMessage("ai", "I need a single test report to prepare the right context.");
+      return;
+    }
+
+    if (action === "summary") {
+      this.addMessage("user", "Summarize this report and tell me what to study next.");
+      this.generateResponse([
+        "Summarize this test report in markdown.",
+        "Include strengths, weak topics, and a short next-step study plan.",
+        "",
+        context.contextText.substring(0, 12000),
+      ].join("\n"));
+    } else if (action === "weak-topics") {
+      this.addMessage("user", "Create study material for my weak topics.");
+      this.generateResponse([
+        "Create markdown study material focused on the weakest topics only.",
+        "For each weak topic include: a simple explanation, 1 short example, common mistakes, and a 3-step revision checklist.",
+        "",
+        context.contextText.substring(0, 12000),
+      ].join("\n"));
+    } else if (action === "questions") {
+      this.addMessage("user", "Generate practice questions from my weak topics.");
+      this.generateResponse([
+        "Create 5 practice questions from the student's weak topics.",
+        "Return markdown with numbered questions and bold answers.",
+        "",
+        context.contextText.substring(0, 12000),
+      ].join("\n"));
+    }
+  }
+
+  useSamplePrompt(prompt) {
+    if (!this.isReady) {
+      this.addMessage("ai", "Load a model first so I can use the current report.");
+      return;
+    }
+    if (!prompt) return;
+    this.addMessage("user", prompt);
+    this.generateResponse(`${prompt}\n\nUse this report context:\n${this.getCurrentReportContext().contextText.substring(0, 12000)}`);
+  }
+
+  async sendMessage() {
+    if (!this.isReady || this.isLoading) {
+      if (!this.isReady) this.addMessage("ai", "Load a model first so I can answer using this report.");
+      return;
+    }
+
+    const text = this.inputEl.value.trim();
+    if (!text) return;
+
+    this.addMessage("user", text);
+    this.inputEl.value = "";
+    this.inputEl.style.height = "auto";
+
+    const wasQuizAnswer = await this.handleQuizAnswer(text);
+    if (wasQuizAnswer) return;
+
+    const context = this.getCurrentReportContext();
+    const prompt = [
+      text,
+      "",
+      "Answer using the test report context below. Focus on weak topics and wrong answers when relevant.",
+      context ? context.contextText.substring(0, 12000) : "",
+    ].join("\n");
+    console.log("Sending user message with prompt:", { text, prompt });
+
+    await this.generateResponse(prompt);
+  }
+
+  async generateResponse(prompt) {
+    this.isLoading = true;
+    this.showTyping();
+    this.sendBtn.disabled = true;
+
+    try {
+      this.messages.push({ role: "user", content: prompt });
+      const reply = await this.engine.chat.completions.create({
+        messages: this.messages,
+        temperature: 0.7,
+        max_tokens: 1200,
+      });
+      const responseText = reply.choices[0].message.content;
+      this.messages.push({ role: "assistant", content: responseText });
+      if (this.messages.length > 12) {
+        this.messages = [this.messages[0], ...this.messages.slice(-11)];
+      }
+      this.hideTyping();
+      this.addMessage("ai", responseText);
+    } catch (error) {
+      console.error("AI response error:", error);
+      this.hideTyping();
+      this.addMessage("ai", "Sorry, I hit an error while generating the response. Please try again.");
+    } finally {
+      this.isLoading = false;
+      this.sendBtn.disabled = false;
+    }
+  }
+
+  async generateQuizQuestions() {
+    const context = this.getCurrentReportContext();
+    if (!this.isReady) {
+      this.addMessage("ai", "Load a model first so I can generate quiz questions.");
+      return;
+    }
+    if (!context) {
+      this.addMessage("ai", "I need a single test report before I can generate a quiz.");
+      return;
+    }
+
+    this.quizGenerateBtn.disabled = true;
+    this.quizGenerateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+    this.quizQuestions.innerHTML = "";
+
+    try {
+      const prompt = [
+        "Generate 3 to 5 simple factual or conceptual quiz questions based mainly on the student's weak topics.",
+        "Format exactly like:",
+        "Q: <question>",
+        "A: <answer>",
+        "",
+        "Keep each answer short and study-oriented.",
+        "",
+        context.contextText.substring(0, 12000),
+      ].join("\n");
+
+      const reply = await this.engine.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 1000,
+      });
+
+      const response = reply.choices[0].message.content || "";
+      const qaPairs = [];
+      let currentQuestion = null;
+
+      response.split("\n").forEach((line) => {
+        const trimmed = line.trim();
+        if (/^Q\s*:/i.test(trimmed)) {
+          currentQuestion = trimmed.replace(/^Q\s*:\s*/i, "").trim();
+        } else if (/^A\s*:/i.test(trimmed) && currentQuestion) {
+          qaPairs.push({
+            question: currentQuestion,
+            answer: trimmed.replace(/^A\s*:\s*/i, "").trim(),
+          });
+          currentQuestion = null;
+        }
+      });
+
+      this.currentQuizQuestions = qaPairs.length ? qaPairs : [{
+        question: "What topic needs the most revision in this report?",
+        answer: context.weakTopics[0] ? `${context.weakTopics[0].subject} > ${context.weakTopics[0].topic}` : "No weak topic identified.",
+      }];
+      this.renderQuizQuestions();
+    } catch (error) {
+      console.error("Quiz generation error:", error);
+      this.addMessage("ai", "Sorry, I couldn't generate quiz questions right now. Please try again.");
+    } finally {
+      this.quizGenerateBtn.disabled = false;
+      this.quizGenerateBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Quiz Questions';
+    }
+  }
+
+  renderQuizQuestions() {
+    this.quizQuestions.innerHTML = "";
+    this.currentQuizQuestions.forEach((qaPair, index) => {
+      const wrapper = document.createElement("div");
+      wrapper.style.marginBottom = "8px";
+
+      const questionBtn = document.createElement("button");
+      questionBtn.className = "ai-quiz-question-btn";
+      questionBtn.innerHTML = `<i class="fas fa-question-circle"></i> ${index + 1}. ${this.escapeHtml(qaPair.question)}`;
+      questionBtn.addEventListener("click", () => this.selectQuizQuestion(qaPair.question, index));
+
+      const answerBtn = document.createElement("button");
+      answerBtn.className = "ai-quiz-view-btn";
+      answerBtn.innerHTML = '<i class="fas fa-eye"></i>';
+      answerBtn.title = "View answer";
+      answerBtn.addEventListener("click", () => this.viewQuizAnswer(qaPair, index));
+
+      wrapper.appendChild(questionBtn);
+      wrapper.appendChild(answerBtn);
+      this.quizQuestions.appendChild(wrapper);
+    });
+  }
+
+  selectQuizQuestion(question, index) {
+    this.activeQuizQuestion = question;
+    this.activeQuizIndex = index;
+    this.inputEl.placeholder = `Answer: ${question}`;
+    this.inputEl.focus();
+    document.querySelectorAll(".ai-quiz-question-btn").forEach((btn, btnIndex) => {
+      btn.style.borderColor = btnIndex === index ? "#1f6feb" : "#d6dce5";
+      btn.style.background = btnIndex === index ? "#eff6ff" : "#fff";
+    });
+    this.addMessage("ai", `Selected quiz question ${index + 1}. Type your answer below and I'll compare it with the expected answer.`);
+  }
+
+  viewQuizAnswer(qaPair, index) {
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const messageEl = document.createElement("div");
+    messageEl.className = "ai-chat-message ai";
+    messageEl.innerHTML = `
+      <div class="message-bubble markdown-content">
+        <p><strong>Q${index + 1}:</strong> ${this.escapeHtml(qaPair.question)}</p>
+        <p><strong>Answer:</strong> ${this.escapeHtml(qaPair.answer)}</p>
+      </div>
+      <span class="message-time">${time}</span>
+    `;
+    this.messagesEl.appendChild(messageEl);
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  async handleQuizAnswer(text) {
+    if (!this.activeQuizQuestion || this.activeQuizIndex === null) return false;
+
+    const qaPair = this.currentQuizQuestions[this.activeQuizIndex];
+    this.activeQuizQuestion = null;
+    this.activeQuizIndex = null;
+    this.inputEl.placeholder = "Ask about this report...";
+    document.querySelectorAll(".ai-quiz-question-btn").forEach((btn) => {
+      btn.style.borderColor = "#d6dce5";
+      btn.style.background = "#fff";
+    });
+    this.addMessage("ai", "Evaluating your answer...");
+
+    try {
+      const messages = [
+        {
+          role: "system",
+          content: "You are a supportive study coach. Compare the student's answer with the expected answer, appreciate what is correct, gently fix mistakes, and keep the response concise in markdown.",
+        },
+        {
+          role: "user",
+          content: `Question: ${qaPair.question}\nExpected answer: ${qaPair.answer}\nStudent answer: ${text}`,
+        },
+      ];
+      const reply = await this.engine.chat.completions.create({
+        messages,
+        temperature: 0.7,
+        max_tokens: 700,
+      });
+      this.addMessage("ai", reply.choices[0].message.content.trim());
+    } catch (error) {
+      console.error("Quiz evaluation error:", error);
+      this.addMessage("ai", "I couldn't evaluate that answer right now. Please try again.");
+    }
+
+    return true;
+  }
+
+  addMessage(role, text) {
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const messageEl = document.createElement("div");
+    messageEl.className = `ai-chat-message ${role}`;
+    const content = role === "ai" && typeof marked !== "undefined"
+      ? marked.parse(text)
+      : this.escapeHtml(text);
+    messageEl.innerHTML = `
+      <div class="message-bubble markdown-content">${content}</div>
+      <span class="message-time">${time}</span>
+    `;
+    this.messagesEl.appendChild(messageEl);
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  showTyping() {
+    const typingEl = document.createElement("div");
+    typingEl.className = "ai-chat-message ai";
+    typingEl.id = "typingIndicator";
+    typingEl.innerHTML = `
+      <div class="message-bubble ai-chat-typing">
+        <span></span><span></span><span></span>
+      </div>
+    `;
+    this.messagesEl.appendChild(typingEl);
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  hideTyping() {
+    const typingEl = document.getElementById("typingIndicator");
+    if (typingEl) typingEl.remove();
+  }
+
+  showError(message) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "ai-chat-error";
+    errorEl.textContent = message;
+    this.messagesEl.appendChild(errorEl);
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  escapeHtml(text) {
+    return escapeHtml(text);
+  }
+}
+
 function renderSingleTestReport(test, result, student, studentId, testId, questionPaper) {
   console.log("Rendering report with test, result, student, questionPaper:", {
     test,
@@ -409,6 +1176,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   let correct = 0;
   let total = 0;
   let questionsHtml = "";
+  currentTestQuestionsData = [];
 
   if (!questions || questions.length === 0) {
     questions = [];
@@ -450,8 +1218,17 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   console.log("Final questions array for rendering:", questions);
   questions.forEach((question, index) => {
     const questionNumber = index + 1;
-    const userKey = `Q${questionNumber}`;
-    const userAnswer = result[userKey];
+    let userKey = `Q${questionNumber}`;
+    // subjectname_questionnumber "Mathematics_1" without _Q prefix for questionnumber
+    // replace underscore with underscore followed by Q to separate subject and question number
+    if (question.subjectname_questionnumber){
+      question.subjectname_questionnumber = question.subjectname_questionnumber.replace("_", "_Q");
+      userKey = question.subjectname_questionnumber;
+    }
+    let userAnswer = result[userKey];
+    if (userAnswer == null && result[`Generic_Q${questionNumber}`] != null) {
+      userAnswer = result[`Generic_Q${questionNumber}`];
+    }
     const subject = normalizeFilterValue(question.Subject || question.section);
     const topic = normalizeFilterValue(question.Topic);
     const subtopic = normalizeFilterValue(question.Subtopic);
@@ -459,6 +1236,15 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
     total += 1;
     const isCorrect = question.isCorrect || userAnswer === "R";
     if (isCorrect) correct += 1;
+
+    currentTestQuestionsData.push({
+      questionNumber,
+      subject,
+      topic,
+      subtopic,
+      questionText: question.Question?.trim() || "",
+      isCorrect,
+    });
 
     const options = [1, 2, 3, 4].map((optionIndex) =>
       extractOptionText(question[`Option ${optionIndex}`])
@@ -519,6 +1305,13 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   const subjectOptions = buildFilterOptions(questions, "Subject");
   const topicOptions = buildFilterOptions(questions, "Topic");
   const subtopicOptions = buildFilterOptions(questions, "Subtopic");
+  currentSingleTestAIContext = buildSingleTestAIContext({
+    test,
+    student,
+    correct,
+    total,
+    scorePercent,
+  });
 
   setReportHtml(`
     <div class="card shadow-sm mb-4">
@@ -551,9 +1344,17 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
     </div>
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
       <h5 class="fw-bold mb-0">Detailed Results</h5>
-      <div class="form-check form-switch no-print">
-        <input class="form-check-input" type="checkbox" id="wrongOnlyToggle">
-        <label class="form-check-label" for="wrongOnlyToggle">Show only wrong questions</label>
+      <div class="d-flex gap-2 no-print">
+        <button id="exportCSVDetail" class="btn btn-sm" style="background:#16a085;color:white;border:none">
+          <i class="bi bi-download"></i> Export Detail CSV
+        </button>
+        <button id="exportCSVSummary" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
+          <i class="bi bi-download"></i> Export Summary CSV
+        </button>
+        <div class="form-check form-switch ms-2 d-flex align-items-center">
+          <input class="form-check-input" type="checkbox" id="wrongOnlyToggle">
+          <label class="form-check-label ms-2" for="wrongOnlyToggle">Show only wrong</label>
+        </div>
       </div>
     </div>
     <div class="row g-2 mb-3 no-print">
@@ -584,6 +1385,8 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   `);
 
   initWrongQuestionFilter();
+  initSingleTestCSVExport(test.testName, student.name);
+  initSingleTestAIChat();
 }
 
 function initWrongQuestionFilter() {
@@ -631,7 +1434,51 @@ function initWrongQuestionFilter() {
   updateFilter();
 }
 
+function initSingleTestCSVExport(testName, studentName) {
+  const detailBtn = document.getElementById("exportCSVDetail");
+  const summaryBtn = document.getElementById("exportCSVSummary");
+  if (!detailBtn || !summaryBtn || !currentTestQuestionsData.length) return;
+
+  const safeTestName = (testName || "Test").replace(/[^a-zA-Z0-9]/g, "_");
+  const safeStudentName = (studentName || "Student").replace(/[^a-zA-Z0-9]/g, "_");
+
+  detailBtn.addEventListener("click", () => {
+    const rows = [
+      ["Subject", "Topic", "Subtopic", "Question", "Correct/Wrong"],
+      ...currentTestQuestionsData.map(q => [
+        q.subject,
+        q.topic,
+        q.subtopic,
+        q.questionText,
+        q.isCorrect ? "Correct" : "Wrong"
+      ])
+    ];
+    downloadCSV(`${safeTestName}_${safeStudentName}_Detail.csv`, rows);
+  });
+
+  summaryBtn.addEventListener("click", () => {
+    const rows = [
+      ["Subject", "Topic", "Num_Correct", "Num_Wrong"],
+      ...buildCurrentTestSummaryData().map((s) => [s.subject, s.topic, s.correct, s.wrong]),
+    ];
+    downloadCSV(`${safeTestName}_${safeStudentName}_Summary.csv`, rows);
+  });
+}
+
+function initSingleTestAIChat() {
+  if (!reportAIChatPanel) {
+    reportAIChatPanel = new ReportAIChatPanel();
+  } else {
+    reportAIChatPanel.refreshContextState();
+    reportAIChatPanel.clearChat();
+  }
+}
+
 function renderStudentProgress(student, studentId, rows) {
+  currentSingleTestAIContext = null;
+  if (reportAIChatPanel) {
+    reportAIChatPanel.refreshContextState();
+  }
   const taken = rows.length;
   const avg = taken > 0 ? Math.round(rows.reduce((sum, r) => sum + (Number(r.percent) || 0), 0) / taken) : 0;
   const best = taken > 0 ? Math.max(...rows.map((r) => Number(r.percent) || 0)) : 0;
@@ -750,7 +1597,12 @@ function renderStudentProgress(student, studentId, rows) {
 
     <div class="card shadow-sm">
       <div class="card-body">
-        <h5 class="fw-bold mb-3">All Tests</h5>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-bold mb-0">All Tests</h5>
+          <button id="exportProgressCSV" class="btn btn-sm no-print" style="background:#16a085;color:white;border:none">
+            <i class="bi bi-download"></i> Export CSV
+          </button>
+        </div>
         <div class="table-responsive">
           <table id="testsTable" class="table table-striped align-middle">
             <thead>
@@ -773,6 +1625,7 @@ function renderStudentProgress(student, studentId, rows) {
 
   initStudentProgressChart(studentId, rows);
   initResultsTable();
+  initProgressCSVExport(studentId, rows, student.name);
 }
 
 function initStudentProgressChart(studentId, rows) {
@@ -850,6 +1703,104 @@ function initResultsTable() {
       perPage: 10,
     });
   }
+}
+
+async function initProgressCSVExport(studentId, rows, studentName) {
+  const btn = document.getElementById("exportProgressCSV");
+  if (!btn) return;
+
+  const safeStudentName = (studentName || "Student").replace(/[^a-zA-Z0-9]/g, "_");
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading...';
+
+    try {
+      const csvRows = [["Date", "Subject", "Topic", "Num_Correct", "Num_Wrong"]];
+
+      for (const row of rows) {
+        const testId = row.testId;
+        if (!testId) continue;
+
+        const [testSnap, resultSnap] = await Promise.all([
+          firestore.collection("tests").doc(testId).get(),
+          firestore.collection("results").doc(`${testId}_${studentId}`).get()
+        ]);
+
+        if (!testSnap.exists || !resultSnap.exists) continue;
+
+        const test = testSnap.data();
+        const result = resultSnap.data();
+        const testDate = formatDate(row.dateObj, row.testDateRaw);
+
+        const questionPaper = test.questionPaperID
+          ? await fetchQuestionPaper(test.questionPaperID)
+          : null;
+
+        let questions = questionPaper?.questions || test.questions || [];
+
+        if (!questions || questions.length === 0) {
+          questions = [];
+          for (let key in result) {
+            if (key.includes('_Q') || key.startsWith('Q')) {
+              let section = '';
+              let questionNumber;
+              if (key.includes('_Q')) {
+                const match = key.match(/(.+)_Q(\d+)/);
+                if (match) [, section, questionNumber] = match;
+              } else if (key.startsWith('Q')) {
+                const match = key.match(/Q(\d+)/);
+                if (match) [, questionNumber] = match;
+              }
+              if (questionNumber) {
+                const qNum = parseInt(questionNumber, 10);
+                const isCorrect = result[key] === "R";
+                questions[qNum - 1] = {
+                  questionNumber: qNum,
+                  section,
+                  isCorrect,
+                };
+              }
+            }
+          }
+          questions = questions.filter(q => q !== undefined);
+        }
+
+        const topicStats = new Map();
+        questions.forEach((question, index) => {
+          const questionNumber = index + 1;
+          const userKey = `Q${questionNumber}`;
+          const userAnswer = result[userKey];
+          const subject = normalizeFilterValue(question.Subject || question.section);
+          const topic = normalizeFilterValue(question.Topic);
+
+          if (!subject || !topic) return;
+
+          const key = `${subject}|${topic}`;
+          if (!topicStats.has(key)) {
+            topicStats.set(key, { subject, topic, correct: 0, wrong: 0 });
+          }
+
+          const isCorrect = question.isCorrect || userAnswer === "R";
+          const entry = topicStats.get(key);
+          if (isCorrect) entry.correct += 1;
+          else entry.wrong += 1;
+        });
+
+        topicStats.forEach(stat => {
+          csvRows.push([testDate, stat.subject, stat.topic, stat.correct, stat.wrong]);
+        });
+      }
+
+      downloadCSV(`${safeStudentName}_Progress.csv`, csvRows);
+    } catch (err) {
+      console.error("Export CSV error:", err);
+      alert("Failed to export CSV. Please try again.");
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-download"></i> Export CSV';
+    }
+  });
 }
 
 loadReportFromQueryParams();
