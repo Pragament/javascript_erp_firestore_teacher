@@ -37,6 +37,10 @@ const firestore = firebase.firestore();
 const auth = firebase.auth();
 const contentEl = document.getElementById("test-results-content");
 const subtitleEl = document.getElementById("test-results-subtitle");
+const testSelectEl = document.getElementById("test-select");
+
+let currentTestId = null;
+let availableTests = [];
 
 function setContentHtml(html) {
   contentEl.innerHTML = html;
@@ -103,6 +107,111 @@ async function fetchStudentsBySection(sectionId) {
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
+async function fetchTestsBySections(sectionIds) {
+  if (!sectionIds || sectionIds.length === 0) return [];
+  const tests = [];
+  
+  // Firestore 'in' query supports max 10 values
+  const chunkSize = 10;
+  for (let i = 0; i < sectionIds.length; i += chunkSize) {
+    const chunk = sectionIds.slice(i, i + chunkSize);
+    const snapshot = await firestore.collection("tests")
+      .where("sectionId", "in", chunk)
+      .get();
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      tests.push({
+        id: doc.id,
+        testName: data.testName || 'Test',
+        sectionId: data.sectionId,
+        testDate: data.testDate || ''
+      });
+    });
+  }
+  
+  // Sort by test date (newest first), then by name
+  return tests.sort((a, b) => {
+    const dateA = a.testDate ? new Date(a.testDate) : null;
+    const dateB = b.testDate ? new Date(b.testDate) : null;
+    if (dateA && dateB && !isNaN(dateA) && !isNaN(dateB)) {
+      return dateB - dateA;
+    }
+    return a.testName.localeCompare(b.testName);
+  });
+}
+
+function populateTestSelect(tests, selectedTestId) {
+  if (!testSelectEl) return;
+  
+  availableTests = tests;
+  
+  if (tests.length === 0) {
+    testSelectEl.innerHTML = '<option value="">No tests available</option>';
+    return;
+  }
+  
+  const optionsHtml = tests.map(test => {
+    const selected = test.id === selectedTestId ? 'selected' : '';
+    const dateStr = test.testDate ? ` (${new Date(test.testDate).toLocaleDateString()})` : '';
+    return `<option value="${escapeHtml(test.id)}" ${selected}>${escapeHtml(test.testName)}${dateStr}</option>`;
+  }).join('');
+  
+  testSelectEl.innerHTML = optionsHtml;
+}
+
+async function loadTestResults(testId) {
+  if (!testId) return;
+  currentTestId = testId;
+  
+  setContentHtml(`
+    <div class="text-center py-5">
+      <div class="spinner-border" style="color:#2c3e50"></div>
+      <p class="mt-2">Loading student results...</p>
+    </div>
+  `);
+  
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      showError("Please sign in from the teacher dashboard first.");
+      return;
+    }
+    
+    const teacherSections = await fetchTeacherSections(user.email);
+    
+    if (teacherSections.length === 0) {
+      showError("No sections are assigned to this teacher.");
+      return;
+    }
+    
+    const testSnap = await firestore.collection("tests").doc(testId).get();
+    
+    if (!testSnap.exists) {
+      showError("Test not found.");
+      return;
+    }
+    
+    const test = { id: testSnap.id, ...testSnap.data() };
+    const allowedSectionIds = new Set(teacherSections.map((section) => section.id));
+    
+    if (!allowedSectionIds.has(test.sectionId)) {
+      showError("You do not have access to this test.");
+      return;
+    }
+    
+    const [resultsSnap, students] = await Promise.all([
+      firestore.collection("results").where("testId", "==", testId).get(),
+      fetchStudentsBySection(test.sectionId),
+    ]);
+    
+    const results = resultsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    renderStudentResults(test, results, students);
+  } catch (error) {
+    console.error("Failed to load test results:", error);
+    showError("Unable to load test results right now.");
+  }
+}
+
 function renderStudentResults(test, results, students) {
   subtitleEl.textContent = `${test.testName || "Test"} | ${results.length} student result${results.length === 1 ? "" : "s"}`;
 
@@ -141,14 +250,18 @@ function renderStudentResults(test, results, students) {
             <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
               <i class="bi bi-graph-up"></i> Progress
             </a>
-            ${studentPhone ? `
-              <a href="https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}"
-                 target="_blank"
-                 class="btn btn-sm"
-                 style="background:#25D366;color:white;border:none">
-                <i class="bi bi-whatsapp"></i> Share
-              </a>
-            ` : ""}
+            <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}`}"
+               target="_blank"
+               class="btn btn-sm"
+               style="background:#25D366;color:white;border:none">
+              <i class="bi bi-whatsapp"></i> WhatsApp
+            </a>
+            <button type="button"
+               class="btn btn-sm copy-link-btn"
+               data-url="${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}"
+               style="background:#6c757d;color:white;border:none">
+              <i class="bi bi-link"></i> Copy Link
+            </button>
           </div>
         </div>
       `;
@@ -156,11 +269,28 @@ function renderStudentResults(test, results, students) {
     .join("");
 
   setContentHtml(cardsHtml);
+
+  contentEl.querySelectorAll(".copy-link-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const url = btn.dataset.url;
+      try {
+        await navigator.clipboard.writeText(url);
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check"></i> Copied';
+        setTimeout(() => {
+          btn.innerHTML = originalText;
+        }, 2000);
+      } catch (err) {
+        console.error("Failed to copy:", err);
+        window.prompt("Copy this link:", url);
+      }
+    });
+  });
 }
 
 async function initializePage() {
-  const testId = getTestIdFromQuery();
-  if (!testId) {
+  const urlTestId = getTestIdFromQuery();
+  if (!urlTestId) {
     showError("Missing testId in URL.");
     return;
   }
@@ -172,37 +302,38 @@ async function initializePage() {
     }
 
     try {
-      const [testSnap, teacherSections] = await Promise.all([
-        firestore.collection("tests").doc(testId).get(),
-        fetchTeacherSections(user.email),
-      ]);
-
-      if (!testSnap.exists) {
-        showError("Test not found.");
-        return;
-      }
-
+      // Load teacher sections and all available tests
+      const teacherSections = await fetchTeacherSections(user.email);
+      
       if (teacherSections.length === 0) {
         showError("No sections are assigned to this teacher.");
         return;
       }
-
-      const test = { id: testSnap.id, ...testSnap.data() };
-      const allowedSectionIds = new Set(teacherSections.map((section) => section.id));
-      if (!allowedSectionIds.has(test.sectionId)) {
-        showError("You do not have access to this test.");
-        return;
+      
+      const sectionIds = teacherSections.map(s => s.id);
+      const tests = await fetchTestsBySections(sectionIds);
+      
+      // Populate dropdown with URL test pre-selected
+      populateTestSelect(tests, urlTestId);
+      
+      // Setup change listener
+      if (testSelectEl) {
+        testSelectEl.onchange = (e) => {
+          const selectedTestId = e.target.value;
+          if (selectedTestId && selectedTestId !== currentTestId) {
+            // Update URL without reloading page
+            const newUrl = new URL(window.location.href);
+            newUrl.searchParams.set("testId", selectedTestId);
+            window.history.replaceState({}, "", newUrl);
+            loadTestResults(selectedTestId);
+          }
+        };
       }
-
-      const [resultsSnap, students] = await Promise.all([
-        firestore.collection("results").where("testId", "==", testId).get(),
-        fetchStudentsBySection(test.sectionId),
-      ]);
-
-      const results = resultsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      renderStudentResults(test, results, students);
+      
+      // Load results for the URL-specified test
+      await loadTestResults(urlTestId);
     } catch (error) {
-      console.error("Failed to load test results:", error);
+      console.error("Failed to initialize page:", error);
       showError("Unable to load test results right now.");
     }
   });

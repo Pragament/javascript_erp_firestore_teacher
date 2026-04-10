@@ -44,8 +44,12 @@ const elements = {
     sectionSwitcher: document.getElementById('section-switcher'),
     sectionSelect: document.getElementById('section-select'),
     testsContainer: document.getElementById('tests-container'),
-    refreshTests: document.getElementById('refresh-tests')
+    refreshTests: document.getElementById('refresh-tests'),
+    viewStudentsBtn: document.getElementById('view-students-btn'),
+    studentsTableBody: document.getElementById('studentsTableBody')
 };
+
+let studentsDataTable = null;
 
 // Authentication state listener
 auth.onAuthStateChanged(async (user) => {
@@ -239,3 +243,100 @@ elements.sectionSelect.onchange = async (event) => {
     elements.testsContainer.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-success"></div><p class="mt-2 text-muted">Loading tests...</p></div>';
     await loadTests();
 };
+
+// View all students button
+elements.viewStudentsBtn.onclick = async () => {
+    const modal = new bootstrap.Modal(document.getElementById('studentsModal'));
+    modal.show();
+    await loadAndRenderStudents();
+};
+
+// Load students from all assigned sections
+async function loadAllStudents() {
+    if (availableSections.length === 0) return [];
+    const sectionIds = availableSections.map(s => s.id);
+    const students = [];
+    
+    // Firestore 'in' query supports max 10 values
+    const chunkSize = 10;
+    for (let i = 0; i < sectionIds.length; i += chunkSize) {
+        const chunk = sectionIds.slice(i, i + chunkSize);
+        const snapshot = await firestore.collection('students')
+            .where('sectionId', 'in', chunk)
+            .get();
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            students.push({
+                id: doc.id,
+                name: data.name || 'Unknown',
+                studentId: data.studentId || doc.id,
+                sectionId: data.sectionId,
+                sectionName: availableSections.find(s => s.id === data.sectionId)?.name || data.sectionId,
+                phone: data.phone || ''
+            });
+        });
+    }
+    
+    // Sort by name
+    return students.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Load and render students table
+async function loadAndRenderStudents() {
+    elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center"><div class="spinner-border text-success"></div><p class="mt-2 text-muted">Loading students...</p></td></tr>';
+    
+    try {
+        const students = await loadAllStudents();
+        
+        if (students.length === 0) {
+            elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No students found</td></tr>';
+            return;
+        }
+        
+        const rowsHtml = students.map(student => {
+            const progressUrl = `report.html?studentId=${encodeURIComponent(student.id)}`;
+            return `
+                <tr>
+                    <td>${escapeHtml(student.name)}</td>
+                    <td>${escapeHtml(student.studentId)}</td>
+                    <td>${escapeHtml(student.sectionName)}</td>
+                    <td>${escapeHtml(student.phone)}</td>
+                    <td>
+                        <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none;">
+                            <i class="bi bi-graph-up me-1"></i> Progress
+                        </a>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        elements.studentsTableBody.innerHTML = rowsHtml;
+        
+        // Initialize DataTable
+        const table = document.getElementById('studentsTable');
+        if (table && window.simpleDatatables?.DataTable) {
+            if (studentsDataTable) {
+                studentsDataTable.destroy();
+            }
+            studentsDataTable = new window.simpleDatatables.DataTable(table, {
+                searchable: true,
+                fixedHeight: false,
+                perPage: 25,
+                perPageSelect: [10, 25, 50, 100]
+            });
+        }
+    } catch (error) {
+        console.error('Load students:', error);
+        elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Error loading students</td></tr>';
+    }
+}
+
+// Escape HTML helper
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
