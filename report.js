@@ -1156,6 +1156,11 @@ class ReportAIChatPanel {
   }
 }
 
+function getLetter(index) {
+  const letters = ['A', 'B', 'C', 'D'];
+  return letters[index - 1] || null; // returns null if out of range
+}
+
 function renderSingleTestReport(test, result, student, studentId, testId, questionPaper) {
   console.log("Rendering report with test, result, student, questionPaper:", {
     test,
@@ -1276,23 +1281,32 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
         : ""}
     `;
 
+    const isSkipped = !userAnswer || userAnswer === "" || userAnswer === "S";
+
     options.forEach((opt, optionIndex) => {
       if (!opt) return;
 
       const optionNumber = optionIndex + 1;
       const isCorrectOption = optionNumber === correctOption;
-      const isUserAnswer = userAnswer === String(optionNumber);
+      const isUserAnswer = userAnswer === getLetter(optionNumber);
+      const optionLetter = String.fromCharCode(65 + optionIndex);
 
       let className = "option-neutral";
-      if (isCorrectOption) className = "option-correct";
+      if (isSkipped && isCorrectOption) className = "option-skipped";
+      else if (isCorrectOption) className = "option-correct";
       else if (isUserAnswer) className = "option-wrong";
+      //else if (isSkipped && isCorrectOption) className = "option-skipped";
+
+      let indicator = "";
+      if (isCorrectOption) indicator = " <strong class='hidden'>R</strong>";
+      else if (isUserAnswer && !isCorrectOption) indicator = ` <strong class='hidden'>${optionLetter} ✗</strong>`;
+      else if (isSkipped && !isCorrectOption) indicator = " <strong class='hidden'>S</strong>";
 
       questionsHtml += `
         <div class="option-box ${className}">
-          <strong>${String.fromCharCode(65 + optionIndex)}.</strong>
+          <strong>${optionLetter}.</strong>
           ${opt}
-          ${isCorrectOption ? " ✓" : ""}
-          ${isUserAnswer && !isCorrectOption ? " ✗" : ""}
+          ${indicator}
         </div>
       `;
     });
