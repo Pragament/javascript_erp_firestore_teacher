@@ -1401,6 +1401,19 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
   initWrongQuestionFilter();
   initSingleTestCSVExport(test.testName, student.name);
   initSingleTestAIChat();
+  renderMathInReport();
+}
+
+function renderMathInReport() {
+  if (typeof renderMathInElement !== "undefined") {
+    renderMathInElement(document.getElementById("report-content"), {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false }
+      ],
+      throwOnError: false
+    });
+  }
 }
 
 function initWrongQuestionFilter() {
