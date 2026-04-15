@@ -1414,6 +1414,10 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
       </div>
     </div>
     <div id="question-filter-status" class="text-muted small mb-3"></div>
+    <div class="alert alert-warning small mb-3 d-flex align-items-center" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      <span><strong>AI-Generated Content:</strong> AI can make mistakes. Always verify important information like question papers and chat responses.</span>
+    </div>
     ${questionsHtml}
   `);
 
