@@ -1277,7 +1277,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
           </div>
         ` : ""}
         ${question.Question?.trim()
-        ? `<p class="mb-3">${question.Question}</p>`
+        ? `<p class="mb-3">${escapeHtml(question.Question)}</p>`
         : ""}
     `;
 
@@ -1305,7 +1305,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       questionsHtml += `
         <div class="option-box ${className}">
           <strong>${optionLetter}.</strong>
-          ${opt}
+          ${escapeHtml(opt)}
           ${indicator}
         </div>
       `;
