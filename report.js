@@ -1311,6 +1311,25 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       `;
     });
 
+    const feedbackCorrectAnswer = question.feedbackCorrectAnswer || question.feedback || question.explanation || question.solution;
+
+    if (feedbackCorrectAnswer) {
+      const feedbackId = `feedback-${questionNumber}`;
+      questionsHtml += `
+        <div class="feedback-section mt-3">
+          <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#${feedbackId}" aria-expanded="false" aria-controls="${feedbackId}">
+            <i class="bi bi-chevron-down me-1"></i> View Explanation
+          </button>
+          <div class="collapse mt-2" id="${feedbackId}">
+            <div class="card card-body bg-light border-start border-4 border-success">
+              <h6 class="fw-bold text-success mb-2">Explanation</h6>
+              <div class="feedback-content">${escapeHtml(feedbackCorrectAnswer)}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     questionsHtml += "</div>";
   });
 
