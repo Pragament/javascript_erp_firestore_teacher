@@ -338,7 +338,7 @@ async function loadStudentProgressReport(studentId) {
           <h5 class="fw-bold mb-3">Student Information</h5>
           <p><strong>Name:</strong> ${escapeHtml(studentData.name || "N/A")}</p>
           <p><strong>Student ID:</strong> ${escapeHtml(studentData.studentId || studentId)}</p>
-          <p><strong>Phone:</strong> ${escapeHtml(studentData.phone || "N/A")}</p>
+${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone)}</p>` : ''}
         </div>
       </div>
       <div class="alert alert-warning">No test results found for this student.</div>
@@ -1321,7 +1321,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
             <h5 class="fw-bold mb-3">Student Information</h5>
             <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
             <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId || result.studentId || "N/A")}</p>
-            <p><strong>Phone:</strong> ${escapeHtml(student.phone || "N/A")}</p>
+${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` : ''}
           </div>
           <div class="col-md-6">
             <h5 class="fw-bold mb-3">Test Information</h5>
@@ -1570,7 +1570,7 @@ function renderStudentProgress(student, studentId, rows) {
             <h5 class="fw-bold mb-3">Student Information</h5>
             <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
             <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId)}</p>
-            <p><strong>Phone:</strong> ${escapeHtml(student.phone || "N/A")}</p>
+${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` : ''}
           </div>
           <div class="col-md-6">
             <h5 class="fw-bold mb-3">Progress Summary</h5>
