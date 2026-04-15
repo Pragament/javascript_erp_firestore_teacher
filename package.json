@@ -1,0 +1,18 @@
+{
+  "name": "javascript-erp-firestore-teacher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:dev": "node scripts/build.mjs dev",
+    "build:prod": "node scripts/build.mjs prod",
+    "build": "node scripts/build.mjs prod",
+    "clean": "node scripts/build.mjs clean"
+  },
+  "dependencies": {
+    "clean-css": "^5.3.3",
+    "html-minifier-terser": "^7.2.0",
+    "javascript-obfuscator": "^4.1.1",
+    "terser": "^5.39.0"
+  }
+}

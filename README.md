@@ -1,145 +1,121 @@
-# Teacher App - Code Obfuscation
+# Teacher App Release Workflow
 
-## Quick Start
+This project now ships with two build targets:
 
-### 1. Edit Source Code
+- `dist/dev`: readable files for local testing and QA
+- `dist/prod`: minified, bundled, hashed, and obfuscated files for release
 
-```bash
-# Edit the readable source file
-vim app.js
-```
+The production output is designed to make the shipped code harder to read, reuse, or reverse-engineer. It does this by:
 
-### 2. Run Obfuscation
+- bundling each page's local JavaScript into a single file
+- minifying HTML, CSS, and JavaScript
+- obfuscating the JavaScript with control-flow flattening, string array encoding, dead-code injection, and self-defending output
+- emitting hashed asset names under `dist/prod/assets`
 
-**Windows:**
+## Install
 
-```cmd
-obfuscate.bat simple
-```
-
-**Linux/Mac:**
+Run this once before building:
 
 ```bash
-chmod +x obfuscate.sh
-./obfuscate.sh simple
+npm install
 ```
 
-### 3. Deploy
+## Development Workflow
+
+Edit the source files in the project root:
+
+- `index.html`
+- `analytics.html`
+- `report.html`
+- `test-results.html`
+- `style.css`
+- `utils.js`
+- `app.js`
+- `analytics.js`
+- `report.js`
+- `test-results.js`
+
+Build a readable development copy:
 
 ```bash
-# Copy obfuscated file to public repo
-cp app.obfuscated.js ../public-repo/javascript_erp_firestore_teacher/
+npm run build:dev
 ```
 
-## Files
+This creates `dist/dev` with the original HTML, CSS, and JS files copied as-is.
 
-| File                | Purpose                      | Location          |
-| ------------------- | ---------------------------- | ----------------- |
-| `app.js`            | Readable source code         | Private repo only |
-| `app.obfuscated.js` | Obfuscated code              | Public repo       |
-| `report.js`         | Report generation            | Both repos        |
-| `obfuscate.bat`     | Windows obfuscation script   | Both repos        |
-| `obfuscate.sh`      | Linux/Mac obfuscation script | Both repos        |
-
-## Obfuscation Command
-
-### Simple Mode (No Dependencies)
+To run the app locally from the source folder:
 
 ```bash
-# Windows
-./obfuscate.bat simple
-
-# Linux/Mac
-./obfuscate.sh simple
+python3 -m http.server 8000
 ```
 
-### Full Mode (Requires javascript-obfuscator)
+Then open:
+
+```text
+http://localhost:8000/index.html
+```
+
+To run the built development copy instead:
 
 ```bash
-# Install first
-npm install -g javascript-obfuscator
-
-# Then run
-obfuscate.bat        # Windows
-./obfuscate.sh       # Linux/Mac
+cd dist/dev
+python3 -m http.server 8000
 ```
 
-## What Gets Obfuscated?
+Then open:
 
-- `firebaseConfigParts` → `_0x4a`
-- `firebaseConfig` → `_c`
-- `firestore` → `_d`
-- `auth` → `_a`
-- `currentUser` → `_u`
-- `initializeApp` → `_i`
-- `getAssignedSection` → Function name obfuscated
-- `loadTests` → Function name obfuscated
-- `viewStudentResults` → Function name obfuscated
-- All comments removed
-- Proper formatting maintained
+```text
+http://localhost:8000/index.html
+```
 
-## Important Rules
+## Production Release Workflow
 
-✅ **DO:**
-
-- Edit `app.js` only
-- Run obfuscation before deploying
-- Deploy `app.obfuscated.js` to public
-- Keep `app.js` in private repo
-
-❌ **DON'T:**
-
-- Never commit `app.js` to public repo
-- Never edit `app.obfuscated.js` directly
-- Never skip obfuscation step
-
-## Example Workflow
+Build the hardened release:
 
 ```bash
-# 1. Make changes
-vim app.js
-
-# 2. Test locally
-python -m http.server 8000
-
-# 3. Obfuscate
-./obfuscate.sh simple
-
-# 4. Deploy
-cp app.obfuscated.js ../public-repo/javascript_erp_firestore_teacher/
-cd ../public-repo
-git add app.obfuscated.js
-git commit -m "Update teacher app"
-git push
+npm run build:prod
 ```
 
-## Troubleshooting
+This generates:
 
-### "Permission denied" on Linux/Mac
+- `dist/prod/*.html`
+- `dist/prod/assets/*.css`
+- `dist/prod/assets/*.js`
+
+Production HTML is rewritten to reference hashed asset files, and the local page scripts are bundled and obfuscated per page.
+
+To smoke-test the release build locally:
 
 ```bash
-chmod +x obfuscate.sh
+cd dist/prod
+python3 -m http.server 8000
 ```
 
-### "javascript-obfuscator not found"
+Then open:
 
-Use simple mode:
+```text
+http://localhost:8000/index.html
+```
+
+## Recommended Release Steps
+
+1. Make and verify your source changes in the project root.
+2. Run `npm run build:dev` and test the readable build if needed.
+3. Run `npm run build:prod`.
+4. Open the app from `dist/prod` and confirm login, dashboard, analytics, test results, and report pages all work.
+5. Deploy only the contents of `dist/prod`.
+
+## Commands
 
 ```bash
-./obfuscate.sh simple
+npm run build:dev   # readable build in dist/dev
+npm run build:prod  # hardened release build in dist/prod
+npm run build       # same as build:prod
+npm run clean       # remove dist
 ```
 
-Or install:
+## Notes
 
-```bash
-npm install -g javascript-obfuscator
-```
-
-## Features
-
-- Google Authentication
-- View Assigned Section
-- View Student Test Results
-- Generate Detailed Reports
-- Share Reports via WhatsApp
-- Automatic Score Calculation
+- Do not deploy the root source files if you want the hardened release behavior.
+- Obfuscation raises the cost of inspection, but it does not make frontend code impossible to reverse-engineer.
+- Firebase keys in client-side apps are still visible to browsers at runtime, so real protection must come from Firebase Auth rules, Firestore rules, and backend-side access control.

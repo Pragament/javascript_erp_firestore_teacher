@@ -250,7 +250,7 @@ function renderStudentResults(test, results, students) {
             <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
               <i class="bi bi-graph-up"></i> Progress
             </a>
-            <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}`}"
+            <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${reportUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${reportUrl}`}"
                target="_blank"
                class="btn btn-sm"
                style="background:#25D366;color:white;border:none">
@@ -258,7 +258,7 @@ function renderStudentResults(test, results, students) {
             </a>
             <button type="button"
                class="btn btn-sm copy-link-btn"
-               data-url="${window.location.origin}/javascript_erp_firestore_teacher/${reportUrl}"
+               data-url="${window.location.origin}/${reportUrl}"
                style="background:#6c757d;color:white;border:none">
               <i class="bi bi-link"></i> Copy Link
             </button>

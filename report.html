@@ -18,7 +18,480 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.0/dist/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script type="module">
+        import { CreateMLCEngine } from 'https://esm.run/@mlc-ai/web-llm';
+        window.CreateMLCEngine = CreateMLCEngine;
+    </script>
+    <style>
+        .ai-chat-container {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            width: 390px;
+            max-width: calc(100vw - 24px);
+            max-height: calc(100vh - 40px);
+            z-index: 1055;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .ai-chat-container.collapsed .ai-chat-panel {
+            display: none;
+        }
+
+        .ai-chat-panel {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-radius: 18px;
+            background: #fff;
+            box-shadow: 0 16px 40px rgba(31, 41, 55, 0.22);
+            max-height: min(760px, calc(100vh - 40px));
+            border: 1px solid rgba(44, 62, 80, 0.08);
+        }
+
+        .ai-chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 16px;
+            color: #fff;
+            cursor: pointer;
+            background: linear-gradient(135deg, #1f6feb 0%, #4f46e5 100%);
+        }
+
+        .ai-chat-header h3 {
+            margin: 0;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-actions button,
+        .ai-chat-fab,
+        .ai-load-btn,
+        .ai-delete-btn,
+        .ai-chat-send-btn,
+        .ai-chat-quick-btn,
+        .ai-quiz-generate-btn,
+        .ai-quiz-view-btn {
+            border: none;
+            cursor: pointer;
+        }
+
+        .header-actions button {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.18);
+        }
+
+        .ai-chat-model-select,
+        .ai-chat-help,
+        .ai-chat-status,
+        .ai-chat-progress,
+        .ai-chat-quick-actions,
+        .ai-chat-quiz,
+        .ai-chat-input-area {
+            border-top: 1px solid rgba(15, 23, 42, 0.06);
+        }
+
+        .ai-chat-model-select,
+        .ai-chat-status,
+        .ai-chat-progress,
+        .ai-chat-input-area {
+            padding: 12px 16px;
+        }
+
+        .ai-chat-model-select {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f8fafc;
+        }
+
+        .ai-model-dropdown,
+        .ai-chat-input {
+            width: 100%;
+            border: 1px solid #d6dce5;
+            outline: none;
+        }
+
+        .ai-model-dropdown {
+            flex: 1;
+            min-width: 0;
+            padding: 9px 10px;
+            border-radius: 10px;
+            background: #fff;
+            font-size: 12px;
+        }
+
+        .ai-load-btn,
+        .ai-delete-btn {
+            padding: 9px 12px;
+            border-radius: 10px;
+            color: #fff;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .ai-load-btn {
+            background: #2563eb;
+        }
+
+        .ai-delete-btn {
+            background: #dc2626;
+        }
+
+        .ai-chat-help {
+            background: #f8fafc;
+        }
+
+        .ai-help-header,
+        .ai-quiz-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .ai-help-content,
+        .ai-quiz-content {
+            padding: 0 16px 12px;
+        }
+
+        .ai-chat-help.collapsed .ai-help-content,
+        .ai-chat-quiz.collapsed .ai-quiz-content {
+            display: none;
+        }
+
+        .ai-help-content p,
+        .ai-help-content ul {
+            font-size: 12px;
+            color: #475569;
+            margin-bottom: 10px;
+        }
+
+        .ai-sample-prompts,
+        .ai-chat-quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .ai-chat-quick-actions {
+            padding: 10px 16px;
+            background: #eff6ff;
+        }
+
+        .ai-chat-quick-btn {
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: #fff;
+            color: #334155;
+            font-size: 11px;
+            border: 1px solid #d6dce5;
+        }
+
+        .ai-chat-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #475569;
+            background: #f8fafc;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #cbd5e1;
+        }
+
+        .status-indicator.ready { background: #16a34a; }
+        .status-indicator.loading { background: #f59e0b; }
+        .status-indicator.error { background: #dc2626; }
+
+        .ai-chat-progress {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            background: #f8fafc;
+        }
+
+        .ai-chat-progress.active {
+            display: flex;
+        }
+
+        .ai-progress-bar {
+            flex: 1;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .ai-progress-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(135deg, #1f6feb 0%, #4f46e5 100%);
+        }
+
+        .ai-progress-text {
+            min-width: 36px;
+            font-size: 11px;
+            color: #64748b;
+            text-align: right;
+        }
+
+        .ai-chat-quiz {
+            background: #f8fafc;
+        }
+
+        .ai-quiz-generate-btn {
+            width: 100%;
+            padding: 10px 12px;
+            margin: 12px 0 8px;
+            border-radius: 10px;
+            color: #fff;
+            background: linear-gradient(135deg, #0f766e 0%, #0ea5e9 100%);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .ai-quiz-generate-btn:disabled,
+        .ai-load-btn:disabled,
+        .ai-delete-btn:disabled,
+        .ai-chat-send-btn:disabled,
+        .ai-chat-quick-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+        .ai-quiz-questions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .ai-quiz-question-btn,
+        .ai-quiz-view-btn {
+            border-radius: 10px;
+        }
+
+        .ai-quiz-question-btn {
+            width: calc(100% - 50px);
+            display: inline-block;
+            padding: 10px 12px;
+            background: #fff;
+            border: 1px solid #d6dce5;
+            font-size: 12px;
+            text-align: left;
+            color: #334155;
+        }
+
+        .ai-quiz-view-btn {
+            width: 40px;
+            margin-left: 6px;
+            padding: 10px 8px;
+            background: #64748b;
+            color: #fff;
+        }
+
+        .ai-chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            background: #f8fafc;
+            min-height: 240px;
+            max-height: 360px;
+        }
+
+        .ai-chat-message {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 12px;
+        }
+
+        .ai-chat-message.user {
+            align-items: flex-end;
+        }
+
+        .ai-chat-message.ai {
+            align-items: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 85%;
+            padding: 11px 13px;
+            border-radius: 14px;
+            line-height: 1.5;
+            font-size: 13px;
+            word-break: break-word;
+        }
+
+        .ai-chat-message.user .message-bubble {
+            background: linear-gradient(135deg, #1f6feb 0%, #4f46e5 100%);
+            color: #fff;
+            border-bottom-right-radius: 5px;
+        }
+
+        .ai-chat-message.ai .message-bubble {
+            background: #fff;
+            color: #1f2937;
+            border-bottom-left-radius: 5px;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+        }
+
+        .message-time {
+            margin-top: 4px;
+            font-size: 10px;
+            color: #94a3b8;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3,
+        .markdown-content h4,
+        .markdown-content p,
+        .markdown-content ul,
+        .markdown-content ol,
+        .markdown-content blockquote,
+        .markdown-content pre,
+        .markdown-content table {
+            margin: 0 0 8px;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            padding-left: 18px;
+        }
+
+        .markdown-content code {
+            background: #eef2ff;
+            padding: 1px 4px;
+            border-radius: 4px;
+        }
+
+        .markdown-content pre {
+            padding: 10px;
+            overflow-x: auto;
+            border-radius: 8px;
+            background: #eff6ff;
+        }
+
+        .markdown-content table {
+            width: 100%;
+            font-size: 12px;
+            border-collapse: collapse;
+        }
+
+        .markdown-content td,
+        .markdown-content th {
+            border: 1px solid #d6dce5;
+            padding: 6px 8px;
+        }
+
+        .ai-chat-input-wrapper {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+        }
+
+        .ai-chat-input {
+            min-height: 42px;
+            max-height: 120px;
+            padding: 10px 12px;
+            resize: none;
+            border-radius: 14px;
+            font-size: 13px;
+        }
+
+        .ai-chat-send-btn {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            color: #fff;
+            background: linear-gradient(135deg, #1f6feb 0%, #4f46e5 100%);
+        }
+
+        .ai-chat-fab {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            color: #fff;
+            background: linear-gradient(135deg, #1f6feb 0%, #4f46e5 100%);
+            box-shadow: 0 14px 28px rgba(31, 111, 235, 0.32);
+            z-index: 1054;
+            font-size: 22px;
+        }
+
+        .ai-chat-fab.hidden {
+            display: none;
+        }
+
+        .ai-chat-typing {
+            display: flex;
+            gap: 4px;
+        }
+
+        .ai-chat-typing span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #94a3b8;
+            animation: report-ai-typing 1.4s infinite ease-in-out;
+        }
+
+        .ai-chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+        .ai-chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes report-ai-typing {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        .ai-chat-error {
+            margin: 0 16px 12px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #fef2f2;
+            color: #b91c1c;
+            font-size: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .ai-chat-container {
+                right: 12px;
+                left: 12px;
+                bottom: 12px;
+                width: auto;
+                max-width: none;
+            }
+
+            .ai-chat-fab {
+                right: 12px;
+                bottom: 12px;
+            }
+        }
+    </style>
 </head>
 <body style="background:#f8f9fa">
     <div class="report-page">
@@ -43,6 +516,86 @@
             </div>
         </div>
     </div>
+
+    <div class="ai-chat-container collapsed" id="aiChatContainer">
+        <div class="ai-chat-panel">
+            <div class="ai-chat-header" id="aiChatHeader">
+                <h3><i class="fas fa-robot"></i> AI Report Assistant</h3>
+                <div class="header-actions">
+                    <button id="aiChatClear" title="Clear chat"><i class="fas fa-trash"></i></button>
+                    <button id="aiChatToggle" title="Minimize or maximize"><i class="fas fa-minus"></i></button>
+                </div>
+            </div>
+            <div class="ai-chat-model-select">
+                <select id="aiModelSelect" class="ai-model-dropdown">
+                    <option value="Llama-3.2-3B-Instruct-q4f32_1-MLC" data-size="600">Llama 3.2 3B</option>
+                </select>
+                <button id="aiLoadModel" class="ai-load-btn"><i class="fas fa-download"></i> Load</button>
+                <button id="aiDeleteModel" class="ai-delete-btn" style="display:none"><i class="fas fa-trash"></i></button>
+            </div>
+            <div class="ai-chat-help collapsed" id="aiChatHelp">
+                <div class="ai-help-header" id="aiHelpHeader">
+                    <span><i class="fas fa-lightbulb"></i> Help & Sample Prompts</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="ai-help-content">
+                    <p>This assistant uses the current report summary plus question detail so you can ask for study notes, weak-topic explanations, and practice quizzes.</p>
+                    <ul>
+                        <li>Load a small model first if you want faster startup.</li>
+                        <li>Ask for markdown notes, flashcards, or revision plans.</li>
+                        <li>Use quiz mode to generate practice questions from weak topics.</li>
+                    </ul>
+                    <div class="ai-sample-prompts">
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Create markdown study material for my weakest topics with short explanations, examples, and a revision checklist." disabled>Weak-topic notes</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Generate 5 practice quiz questions based on the topics where I made the most mistakes. Show answers too." disabled>Practice quiz</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Summarize this report in markdown with strengths, weak areas, and what to study next." disabled>Report summary</button>
+                    </div>
+                </div>
+            </div>
+            <div class="ai-chat-progress" id="aiProgressContainer">
+                <div class="ai-progress-bar">
+                    <div class="ai-progress-fill" id="aiProgressFill"></div>
+                </div>
+                <span class="ai-progress-text" id="aiProgressText">0%</span>
+            </div>
+            <div class="ai-chat-status">
+                <span class="status-indicator" id="aiStatusIndicator"></span>
+                <span id="aiStatusText">Open a single test report, then load a model</span>
+            </div>
+            <div class="ai-chat-quick-actions" id="aiQuickActions" style="display:none">
+                <button class="ai-chat-quick-btn" data-action="summary">Summarize Report</button>
+                <button class="ai-chat-quick-btn" data-action="weak-topics">Study Weak Topics</button>
+                <button class="ai-chat-quick-btn" data-action="questions">Practice Questions</button>
+            </div>
+            <div class="ai-chat-quiz collapsed" id="aiChatQuiz">
+                <div class="ai-quiz-header" id="aiQuizHeader">
+                    <span><i class="fas fa-graduation-cap"></i> Quiz Mode</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="ai-quiz-content">
+                    <button class="ai-quiz-generate-btn" id="aiQuizGenerate" disabled>
+                        <i class="fas fa-magic"></i> Generate Quiz Questions
+                    </button>
+                    <div class="ai-quiz-questions" id="aiQuizQuestions"></div>
+                </div>
+            </div>
+            <div class="ai-chat-messages" id="aiChatMessages">
+                <div class="ai-chat-message ai">
+                    <div class="message-bubble markdown-content">Open a single test report, load a WebLLM model, and then ask for weak-topic notes, practice questions, or revision help.</div>
+                    <span class="message-time">Just now</span>
+                </div>
+            </div>
+            <div class="ai-chat-input-area" id="aiChatInputArea" style="display:none">
+                <div class="ai-chat-input-wrapper">
+                    <textarea class="ai-chat-input" id="aiChatInput" placeholder="Ask about this report..." rows="1" disabled></textarea>
+                    <button class="ai-chat-send-btn" id="aiChatSend" disabled title="Send message"><i class="fas fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <button class="ai-chat-fab" id="aiChatFab" title="Open AI report chat">
+        <i class="fas fa-robot"></i>
+    </button>
 
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>

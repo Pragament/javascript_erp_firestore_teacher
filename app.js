@@ -120,7 +120,7 @@ function setCurrentSection(sectionId) {
     const section = availableSections.find((item) => item.id === sectionId) || availableSections[0] || null;
     currentSectionId = section ? section.id : null;
     currentSectionName = section ? section.name : '';
-    elements.sectionName.textContent = currentSectionName || 'No section assigned';
+    elements.sectionName.textContent = currentSectionId ? `${currentSectionName} (ID: ${currentSectionId})` : 'No section assigned';
     if (elements.analyticsLink) {
         const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
         elements.analyticsLink.href = `analytics.html${query}`;
