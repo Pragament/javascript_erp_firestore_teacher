@@ -33,7 +33,7 @@
             position: fixed;
             right: 20px;
             bottom: 20px;
-            width: 390px;
+            width: 500px;
             max-width: calc(100vw - 24px);
             max-height: calc(100vh - 40px);
             z-index: 1055;
@@ -136,6 +136,36 @@
         .ai-chat-progress,
         .ai-chat-input-area {
             padding: 12px 16px;
+        }
+
+        .ai-chat-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 10px 16px;
+            background: #f8fafc;
+            border-top: 1px solid rgba(15, 23, 42, 0.06);
+        }
+
+        .ai-chat-toolbar-btn {
+            border: 1px solid #d6dce5;
+            background: #fff;
+            color: #334155;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 11px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .ai-chat-toolbar-btn.active {
+            background: #1f6feb;
+            border-color: #1f6feb;
+            color: #fff;
+        }
+
+        .ai-chat-section-hidden {
+            display: none !important;
         }
 
         .ai-chat-model-select {
@@ -420,8 +450,8 @@
             overflow-y: auto;
             padding: 16px;
             background: #f8fafc;
-            min-height: 240px;
-            max-height: 360px;
+            min-height: 360px;
+            max-height: 560px;
         }
 
         .ai-chat-message {
@@ -639,7 +669,15 @@
                 <button id="aiLoadModel" class="ai-load-btn"><i class="fas fa-download"></i> Load</button>
                 <button id="aiDeleteModel" class="ai-delete-btn" style="display:none"><i class="fas fa-trash"></i></button>
             </div>
-            <div class="ai-chat-provider-panel" id="aiProviderPanel" style="display:none">
+            <div class="ai-chat-toolbar">
+                <button class="ai-chat-toolbar-btn active" type="button" data-chat-toggle="model">Model</button>
+                <button class="ai-chat-toolbar-btn" type="button" data-chat-toggle="provider">API Key</button>
+                <button class="ai-chat-toolbar-btn" type="button" data-chat-toggle="status">Status</button>
+                <button class="ai-chat-toolbar-btn" type="button" data-chat-toggle="actions">Actions</button>
+                <button class="ai-chat-toolbar-btn" type="button" data-chat-toggle="quiz">Quiz</button>
+                <button class="ai-chat-toolbar-btn" type="button" data-chat-toggle="help">Help</button>
+            </div>
+            <div class="ai-chat-provider-panel ai-chat-section-hidden" id="aiProviderPanel">
                 <div class="ai-provider-hint">Gemini runs with your own API key and can be reused after page reload.</div>
                 <div class="ai-provider-actions">
                     <button id="aiGeminiInstructionsBtn" type="button"><i class="fas fa-key"></i> How to get API key</button>
@@ -662,7 +700,7 @@
                     </ol>
                 </div>
             </div>
-            <div class="ai-chat-help collapsed" id="aiChatHelp">
+            <div class="ai-chat-help collapsed ai-chat-section-hidden" id="aiChatHelp">
                 <div class="ai-help-header" id="aiHelpHeader">
                     <span><i class="fas fa-lightbulb"></i> Help & Sample Prompts</span>
                     <i class="fas fa-chevron-down"></i>
@@ -693,16 +731,16 @@
                 </div>
                 <span class="ai-progress-text" id="aiProgressText">0%</span>
             </div>
-            <div class="ai-chat-status">
+            <div class="ai-chat-status ai-chat-section-hidden" id="aiChatStatusSection">
                 <span class="status-indicator" id="aiStatusIndicator"></span>
                 <span id="aiStatusText">Open a single test report, then load WebLLM or Gemini</span>
             </div>
-            <div class="ai-chat-quick-actions" id="aiQuickActions" style="display:none">
+            <div class="ai-chat-quick-actions ai-chat-section-hidden" id="aiQuickActions" style="display:none">
                 <button class="ai-chat-quick-btn" data-action="summary">Summarize Report</button>
                 <button class="ai-chat-quick-btn" data-action="weak-topics">Study Weak Topics</button>
                 <button class="ai-chat-quick-btn" data-action="questions">Practice Questions</button>
             </div>
-            <div class="ai-chat-quiz collapsed" id="aiChatQuiz">
+            <div class="ai-chat-quiz collapsed ai-chat-section-hidden" id="aiChatQuiz">
                 <div class="ai-quiz-header" id="aiQuizHeader">
                     <span><i class="fas fa-graduation-cap"></i> Quiz Mode</span>
                     <i class="fas fa-chevron-down"></i>

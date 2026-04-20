@@ -654,6 +654,7 @@ class ReportAIChatPanel {
     this.modelSelect = document.getElementById("aiModelSelect");
     this.loadBtn = document.getElementById("aiLoadModel");
     this.deleteBtn = document.getElementById("aiDeleteModel");
+    this.modelSection = document.querySelector(".ai-chat-model-select");
     this.providerPanel = document.getElementById("aiProviderPanel");
     this.geminiApiKeyInput = document.getElementById("aiGeminiApiKey");
     this.geminiKeyStatus = document.getElementById("aiGeminiKeyStatus");
@@ -665,6 +666,7 @@ class ReportAIChatPanel {
     this.progressFill = document.getElementById("aiProgressFill");
     this.progressText = document.getElementById("aiProgressText");
     this.quickActions = document.getElementById("aiQuickActions");
+    this.statusSection = document.getElementById("aiChatStatusSection");
     this.quizContainer = document.getElementById("aiChatQuiz");
     this.quizHeader = document.getElementById("aiQuizHeader");
     this.quizGenerateBtn = document.getElementById("aiQuizGenerate");
@@ -672,10 +674,20 @@ class ReportAIChatPanel {
     this.helpContainer = document.getElementById("aiChatHelp");
     this.helpHeader = document.getElementById("aiHelpHeader");
     this.chatInputArea = document.getElementById("aiChatInputArea");
+    this.toolbarButtons = Array.from(document.querySelectorAll("[data-chat-toggle]"));
+    this.sectionMap = {
+      model: this.modelSection,
+      provider: this.providerPanel,
+      status: this.statusSection,
+      actions: this.quickActions,
+      quiz: this.quizContainer,
+      help: this.helpContainer,
+    };
 
     this.bindEvents();
     this.restoreGeminiApiKey();
     this.updateProviderUI();
+    this.initializeToolbar();
     this.checkModelCacheStatus();
     this.refreshContextState();
   }
@@ -738,6 +750,9 @@ class ReportAIChatPanel {
     if (this.quizGenerateBtn) {
       this.quizGenerateBtn.addEventListener("click", () => this.generateQuizQuestions());
     }
+    this.toolbarButtons.forEach((button) => {
+      button.addEventListener("click", () => this.toggleToolbarSection(button.dataset.chatToggle || ""));
+    });
   }
 
   getCurrentReportContext() {
@@ -810,7 +825,10 @@ class ReportAIChatPanel {
     const isGemini = provider === "gemini";
     this.provider = provider;
 
-    if (this.providerPanel) this.providerPanel.style.display = isGemini ? "block" : "none";
+    if (this.providerPanel && !isGemini) {
+      this.providerPanel.classList.add("ai-chat-section-hidden");
+      this.setToolbarButtonState("provider", false);
+    }
     if (this.loadBtn) {
       this.loadBtn.innerHTML = isGemini
         ? '<i class="fas fa-bolt"></i> Connect'
@@ -867,6 +885,31 @@ class ReportAIChatPanel {
     if (this.quizGenerateBtn) this.quizGenerateBtn.disabled = false;
     if (this.quickActions) this.quickActions.style.display = "flex";
     if (this.chatInputArea) this.chatInputArea.style.display = "block";
+  }
+
+  initializeToolbar() {
+    this.setToolbarButtonState("model", true);
+  }
+
+  setToolbarButtonState(key, isActive) {
+    const button = this.toolbarButtons.find((item) => item.dataset.chatToggle === key);
+    if (button) button.classList.toggle("active", isActive);
+  }
+
+  toggleToolbarSection(key) {
+    const section = this.sectionMap[key];
+    if (!section) return;
+    if (key === "provider" && this.getSelectedProvider() !== "gemini") {
+      this.addMessage("ai", "Switch the model dropdown to Gemini to manage the API key section.");
+      return;
+    }
+
+    const shouldShow = section.classList.contains("ai-chat-section-hidden");
+    section.classList.toggle("ai-chat-section-hidden", !shouldShow);
+    if (key === "actions") {
+      section.style.display = shouldShow && this.isReady ? "flex" : "none";
+    }
+    this.setToolbarButtonState(key, shouldShow);
   }
 
   buildSystemPrompt(context) {
