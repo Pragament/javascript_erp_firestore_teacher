@@ -518,6 +518,7 @@ async function loadReportFromQueryParams() {
 let currentTestQuestionsData = [];
 let currentSingleTestAIContext = null;
 let reportAIChatPanel = null;
+let ctsStatsDataTable = null;
 const DEFAULT_SCORING_RULES = {
   correct: 3,
   wrong: -1,
@@ -2807,29 +2808,40 @@ function renderSubjectProgressSummaryTable(subjectSummary) {
   `;
 }
 
-function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary) {
+function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary, hideNoErrors = true) {
   if (!ctsSummary.length) {
     return `<div class="text-muted small">No chapter/topic/subtopic progress data available yet (requires common topics across multiple tests).</div>`;
   }
 
-  const rowsHtml = ctsSummary.map((entry) => `
-    <tr>
+  const rowsHtml = ctsSummary
+    .filter((entry) => !hideNoErrors || entry.wrong + entry.skipped > 0)
+    .map((entry) => {
+      const hasErrors = entry.wrong + entry.skipped > 0;
+    return `
+    <tr data-has-errors="${hasErrors}">
       <td>${escapeHtml(entry.chapter)}</td>
       <td>${escapeHtml(entry.topic || "—")}</td>
       <td>${escapeHtml(entry.subtopic || "—")}</td>
-      <td>${entry.testsTaken}</td>
-      <td>${entry.correct}</td>
-      <td>${entry.wrong}</td>
-      <td>${entry.skipped}</td>
-      <td>${entry.totalQuestions}</td>
-      <td>${entry.averagePercent.toFixed(1)}%</td>
-      <td>${entry.bestPercent.toFixed(1)}%</td>
-      <td>${entry.latestPercent.toFixed(1)}%</td>
-      <td class="${entry.improvement >= 0 ? "text-success" : "text-danger"}">${entry.improvement >= 0 ? "+" : ""}${entry.improvement.toFixed(1)}%</td>
+      <td data-order="${entry.testsTaken}">${entry.testsTaken}</td>
+      <td data-order="${entry.correct}">${entry.correct}</td>
+      <td data-order="${entry.wrong}">${entry.wrong}</td>
+      <td data-order="${entry.skipped}">${entry.skipped}</td>
+      <td data-order="${entry.totalQuestions}">${entry.totalQuestions}</td>
+      <td data-order="${entry.averagePercent.toFixed(1)}">${entry.averagePercent.toFixed(1)}%</td>
+      <td data-order="${entry.bestPercent.toFixed(1)}">${entry.bestPercent.toFixed(1)}%</td>
+      <td data-order="${entry.latestPercent.toFixed(1)}">${entry.latestPercent.toFixed(1)}%</td>
+      <td data-order="${entry.improvement.toFixed(1)}" class="${entry.improvement >= 0 ? "text-success" : "text-danger"}">${entry.improvement >= 0 ? "+" : ""}${entry.improvement.toFixed(1)}%</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 
   return `
+    <div class="mb-3 no-print">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="ctsHideNoErrorsToggle"${hideNoErrors ? " checked" : ""}>
+        <label class="form-check-label small" for="ctsHideNoErrorsToggle">Hide topics with no errors (0 wrong & 0 skipped)</label>
+      </div>
+    </div>
     <div class="table-responsive">
       <table id="ctsProgressTable" class="table table-sm align-middle mb-0">
         <thead>
@@ -3151,16 +3163,25 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
 
   initSubjectProgressChart(studentId, rows, subjectSummary);
   initResultsTable();
-  initCTSProgressTable();
+  initCTSProgressTable(ctsSummary);
   initProgressCSVExport(studentId, rows, student.name);
 }
 
-function initCTSProgressTable() {
+function initCTSProgressTable(ctsSummary) {
+  const container = document.getElementById("ctsProgressSummaryTable");
   const table = document.getElementById("ctsProgressTable");
-  if (!table) return;
+  const toggle = document.getElementById("ctsHideNoErrorsToggle");
+
+  if (!table || !container) return;
+
+  if (ctsStatsDataTable) {
+    ctsStatsDataTable.destroy();
+    ctsStatsDataTable = null;
+  }
+
   if (window.simpleDatatables?.DataTable) {
     // eslint-disable-next-line no-new
-    new window.simpleDatatables.DataTable(table, {
+    ctsStatsDataTable = new window.simpleDatatables.DataTable(table, {
       searchable: true,
       fixedHeight: true,
       perPage: 10,
@@ -3179,6 +3200,20 @@ function initCTSProgressTable() {
         { select: 11, type: "number", sort: "desc" }, // Trend
       ],
     });
+  }
+
+  if (toggle) {
+    const rebuildTable = () => {
+      const hideNoErrors = toggle.checked;
+      if (ctsStatsDataTable) {
+        ctsStatsDataTable.destroy();
+        ctsStatsDataTable = null;
+      }
+      container.innerHTML = renderChapterTopicSubtopicProgressSummaryTable(ctsSummary, hideNoErrors);
+      initCTSProgressTable(ctsSummary);
+    };
+
+    toggle.addEventListener("change", rebuildTable);
   }
 }
 
