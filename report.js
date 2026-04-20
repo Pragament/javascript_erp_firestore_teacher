@@ -474,6 +474,7 @@ ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone
       correct: scoreDetails.correct,
       total: scoreDetails.total,
       subjectStats,
+      questionRecords,
     });
   }
 
@@ -2667,6 +2668,102 @@ function buildStudentProgressSubjectSummary(rows) {
     .sort((a, b) => a.subject.localeCompare(b.subject));
 }
 
+function buildStudentProgressChapterTopicSubtopicSummary(rows) {
+  const ctsMap = new Map(); // chapter-topic-subtopic as key
+
+  rows.forEach((row) => {
+    (row.questionRecords || []).forEach((record) => {
+      const chapter = normalizeFilterValue(record.chapter);
+      const topic = normalizeFilterValue(record.topic);
+      const subtopic = normalizeFilterValue(record.subtopic);
+
+      // Only include if chapter is available
+      if (!chapter) return;
+
+      const key = `${chapter}|${topic}|${subtopic}`;
+
+      if (!ctsMap.has(key)) {
+        ctsMap.set(key, {
+          chapter,
+          topic,
+          subtopic,
+          testPerformances: new Map(), // testId -> { correct, total }
+        });
+      }
+
+      const entry = ctsMap.get(key);
+      if (!entry.testPerformances.has(row.testId)) {
+        entry.testPerformances.set(row.testId, {
+          testName: row.testName,
+          dateObj: row.dateObj,
+          testDateRaw: row.testDateRaw,
+          correct: 0,
+          total: 0,
+        });
+      }
+
+      const testPerf = entry.testPerformances.get(row.testId);
+      testPerf.total++;
+      if (record.isCorrect) testPerf.correct++;
+    });
+  });
+
+  return Array.from(ctsMap.values())
+    .filter((entry) => entry.testPerformances.size >= 2) // Only include if appears in multiple tests
+    .map((entry) => {
+      const testResults = Array.from(entry.testPerformances.values())
+        .map((perf) => ({
+          ...perf,
+          percent: perf.total > 0 ? (perf.correct / perf.total) * 100 : 0,
+        }))
+        .sort((a, b) => {
+          const at = a.dateObj?.getTime?.();
+          const bt = b.dateObj?.getTime?.();
+          const aValid = typeof at === "number" && !Number.isNaN(at);
+          const bValid = typeof bt === "number" && !Number.isNaN(bt);
+          if (aValid && bValid) return at - bt;
+          if (aValid) return -1;
+          if (bValid) return 1;
+          return String(a.testName).localeCompare(String(b.testName));
+        });
+
+      const percents = testResults.map((tr) => tr.percent);
+      const averagePercent = percents.length
+        ? percents.reduce((sum, value) => sum + value, 0) / percents.length
+        : 0;
+      const bestPercent = percents.length ? Math.max(...percents) : 0;
+      const latestPercent = percents.length ? percents[percents.length - 1] : 0;
+      const firstPercent = percents.length ? percents[0] : 0;
+
+      const totalCorrect = testResults.reduce((sum, tr) => sum + tr.correct, 0);
+      const totalWrong = testResults.reduce((sum, tr) => sum + (tr.total - tr.correct), 0);
+      const totalSkipped = 0; // We don't track skipped in this aggregation
+      const totalQuestions = testResults.reduce((sum, tr) => sum + tr.total, 0);
+
+      return {
+        chapter: entry.chapter,
+        topic: entry.topic,
+        subtopic: entry.subtopic,
+        testResults,
+        testsTaken: testResults.length,
+        correct: totalCorrect,
+        wrong: totalWrong,
+        skipped: totalSkipped,
+        totalQuestions,
+        averagePercent,
+        bestPercent,
+        latestPercent,
+        improvement: latestPercent - firstPercent,
+      };
+    })
+    .sort((a, b) => {
+      // Sort by chapter, then topic, then subtopic
+      const aKey = `${a.chapter}|${a.topic}|${a.subtopic}`;
+      const bKey = `${b.chapter}|${b.topic}|${b.subtopic}`;
+      return aKey.localeCompare(bKey);
+    });
+}
+
 function renderSubjectProgressSummaryTable(subjectSummary) {
   if (!subjectSummary.length) {
     return `<div class="text-muted small">No subject-wise progress data available yet.</div>`;
@@ -2693,6 +2790,53 @@ function renderSubjectProgressSummaryTable(subjectSummary) {
         <thead>
           <tr>
             <th>Subject</th>
+            <th>Tests</th>
+            <th>Correct</th>
+            <th>Wrong</th>
+            <th>Skipped</th>
+            <th>Questions</th>
+            <th>Average</th>
+            <th>Best</th>
+            <th>Latest</th>
+            <th>Trend</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary) {
+  if (!ctsSummary.length) {
+    return `<div class="text-muted small">No chapter/topic/subtopic progress data available yet (requires common topics across multiple tests).</div>`;
+  }
+
+  const rowsHtml = ctsSummary.map((entry) => `
+    <tr>
+      <td>${escapeHtml(entry.chapter)}</td>
+      <td>${escapeHtml(entry.topic || "—")}</td>
+      <td>${escapeHtml(entry.subtopic || "—")}</td>
+      <td>${entry.testsTaken}</td>
+      <td>${entry.correct}</td>
+      <td>${entry.wrong}</td>
+      <td>${entry.skipped}</td>
+      <td>${entry.totalQuestions}</td>
+      <td>${entry.averagePercent.toFixed(1)}%</td>
+      <td>${entry.bestPercent.toFixed(1)}%</td>
+      <td>${entry.latestPercent.toFixed(1)}%</td>
+      <td class="${entry.improvement >= 0 ? "text-success" : "text-danger"}">${entry.improvement >= 0 ? "+" : ""}${entry.improvement.toFixed(1)}%</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="table-responsive">
+      <table id="ctsProgressTable" class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Chapter</th>
+            <th>Topic</th>
+            <th>Subtopic</th>
             <th>Tests</th>
             <th>Correct</th>
             <th>Wrong</th>
@@ -2746,6 +2890,7 @@ function renderStudentProgress(student, studentId, rows) {
   const best = taken > 0 ? Math.max(...rows.map((r) => Number(r.percent) || 0)) : 0;
   const latest = taken > 0 ? (Number(rows[taken - 1].percent) || 0) : 0;
   const subjectSummary = buildStudentProgressSubjectSummary(rows);
+  const ctsSummary = buildStudentProgressChapterTopicSubtopicSummary(rows);
   const strongestSubject = subjectSummary.length
     ? subjectSummary.reduce((bestEntry, entry) => (entry.averagePercent > bestEntry.averagePercent ? entry : bestEntry), subjectSummary[0])
     : null;
@@ -2963,6 +3108,18 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
       </div>
     </div>
 
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-bold mb-0">Chapter/Topic/Subtopic Progress Stats</h5>
+          <small class="text-muted">Progress across tests for topics that appear in multiple tests.</small>
+        </div>
+        <div id="ctsProgressSummaryTable">
+          ${renderChapterTopicSubtopicProgressSummaryTable(ctsSummary)}
+        </div>
+      </div>
+    </div>
+
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -2994,7 +3151,35 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
 
   initSubjectProgressChart(studentId, rows, subjectSummary);
   initResultsTable();
+  initCTSProgressTable();
   initProgressCSVExport(studentId, rows, student.name);
+}
+
+function initCTSProgressTable() {
+  const table = document.getElementById("ctsProgressTable");
+  if (!table) return;
+  if (window.simpleDatatables?.DataTable) {
+    // eslint-disable-next-line no-new
+    new window.simpleDatatables.DataTable(table, {
+      searchable: true,
+      fixedHeight: true,
+      perPage: 10,
+      columns: [
+        { select: 0, sort: "asc" }, // Chapter
+        { select: 1, sort: "asc" }, // Topic
+        { select: 2, sort: "asc" }, // Subtopic
+        { select: 3, type: "number", sort: "desc" }, // Tests
+        { select: 4, type: "number", sort: "desc" }, // Correct
+        { select: 5, type: "number", sort: "desc" }, // Wrong
+        { select: 6, type: "number", sort: "desc" }, // Skipped
+        { select: 7, type: "number", sort: "desc" }, // Questions
+        { select: 8, type: "number", sort: "desc" }, // Average
+        { select: 9, type: "number", sort: "desc" }, // Best
+        { select: 10, type: "number", sort: "desc" }, // Latest
+        { select: 11, type: "number", sort: "desc" }, // Trend
+      ],
+    });
+  }
 }
 
 function initSubjectProgressChart(studentId, rows, subjectSummary) {
