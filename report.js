@@ -265,6 +265,9 @@ function buildQuestionRecordsForResult(test, result, questionPaper) {
       ? Number(parsedQuestionNumber[1])
       : (Number.isFinite(Number(question.questionNumber)) ? Number(question.questionNumber) : index + 1);
     const subject = normalizeFilterValue(question.Subject || question.section || "General");
+    const chapter = normalizeFilterValue(question.Chapter);
+    const topic = normalizeFilterValue(question.Topic);
+    const subtopic = normalizeFilterValue(question.Subtopic);
 
     const candidateKeys = [];
     if (question.subjectname_questionnumber) {
@@ -294,6 +297,9 @@ function buildQuestionRecordsForResult(test, result, questionPaper) {
     records.push({
       questionNumber,
       subject,
+      chapter,
+      topic,
+      subtopic,
       status,
       isCorrect,
     });
@@ -552,6 +558,7 @@ function matchesMultiValueFilter(recordValue, selectedValues) {
 function getScopedQuestionRecords(records, filters, excludeKey) {
   return (records || []).filter((record) => {
     if (excludeKey !== "subject" && !matchesMultiValueFilter(record.subject, filters.subjects || [])) return false;
+    if (excludeKey !== "chapter" && !matchesMultiValueFilter(record.chapter, filters.chapters || [])) return false;
     if (excludeKey !== "topic" && !matchesMultiValueFilter(record.topic, filters.topics || [])) return false;
     if (excludeKey !== "subtopic" && !matchesMultiValueFilter(record.subtopic, filters.subtopics || [])) return false;
     return true;
@@ -612,6 +619,7 @@ function formatScoreDisplay(metrics) {
 function getFieldToggleDefinitions() {
   return [
     { key: "subject", label: "Subject" },
+    { key: "chapter", label: "Chapter" },
     { key: "topic", label: "Topic" },
     { key: "subtopic", label: "Subtopic" },
     { key: "question", label: "Question" },
@@ -625,10 +633,11 @@ function buildCurrentTestSummaryData(records = currentTestQuestionsData) {
   const summaryMap = new Map();
 
   records.forEach((q) => {
-    const key = `${q.subject}|${q.topic}`;
+    const key = `${q.subject}|${q.chapter}|${q.topic}`;
     if (!summaryMap.has(key)) {
       summaryMap.set(key, {
         subject: q.subject || "General",
+        chapter: q.chapter || "",
         topic: q.topic || "General",
         correct: 0,
         wrong: 0,
@@ -668,21 +677,24 @@ function buildSingleTestAIContext({ test, student, correct, total, scorePercent 
     ? summaryRows
       .map((row) => {
         const subtopicText = row.subtopics.length ? `; subtopics: ${row.subtopics.join(", ")}` : "";
-        //return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}, accuracy ${row.accuracy}%${subtopicText}`;
-        return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}, skipped ${row.skipped}`;
+        const chapterText = row.chapter ? ` > ${row.chapter}` : "";
+        return `${row.subject}${chapterText} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}, skipped ${row.skipped}${subtopicText}`;
       })
       .join("\n")
     : "No summary rows available.";
 
   const weakTopicsText = weakTopics.length
     ? weakTopics
-      .map((row, index) => `${index + 1}. ${row.subject} > ${row.topic} - wrong ${row.wrong}/${row.total}, skipped ${row.skipped}, accuracy ${row.accuracy}%`)
+      .map((row, index) => {
+        const chapterText = row.chapter ? ` > ${row.chapter}` : "";
+        return `${index + 1}. ${row.subject}${chapterText} > ${row.topic} - wrong ${row.wrong}/${row.total}, skipped ${row.skipped}, accuracy ${row.accuracy}%`;
+      })
       .join("\n")
     : "No weak topics detected. The student got every tracked topic correct.";
 
   const detailText = currentTestQuestionsData.length
     ? currentTestQuestionsData
-      .map((q) => `Q${q.questionNumber} | Subject: ${q.subject || "General"} | Topic: ${q.topic || "General"} | Subtopic: ${q.subtopic || "General"} | Result: ${q.status || (q.isCorrect ? "Correct" : "Wrong")} | Question: ${q.questionText || "N/A"}`)
+      .map((q) => `Q${q.questionNumber} | Subject: ${q.subject || "General"} | Chapter: ${q.chapter || "General"} | Topic: ${q.topic || "General"} | Subtopic: ${q.subtopic || "General"} | Result: ${q.status || (q.isCorrect ? "Correct" : "Wrong")} | Question: ${q.questionText || "N/A"}`)
       .join("\n")
     : "No detailed question data available.";
 
@@ -1509,7 +1521,9 @@ class ReportAIChatPanel {
 
       this.currentQuizQuestions = qaPairs.length ? qaPairs : [{
         question: "What topic needs the most revision in this report?",
-        answer: context.weakTopics[0] ? `${context.weakTopics[0].subject} > ${context.weakTopics[0].topic}` : "No weak topic identified.",
+        answer: context.weakTopics[0]
+          ? `${context.weakTopics[0].subject}${context.weakTopics[0].chapter ? ` > ${context.weakTopics[0].chapter}` : ""} > ${context.weakTopics[0].topic}`
+          : "No weak topic identified.",
       }];
       this.renderQuizQuestions();
     } catch (error) {
@@ -1662,60 +1676,134 @@ function getLetter(index) {
   return letters[index - 1] || null; // returns null if out of range
 }
 
-function renderSubjectStatsTable(records, scoringRules) {
-  const subjectMap = new Map();
+function buildGroupedPerformanceRows(records, keys, scoringRules, { wrongOnly = false } = {}) {
+  const groups = new Map();
 
-  records.forEach((record) => {
-    const subject = record.subject || "General";
-    if (!subjectMap.has(subject)) subjectMap.set(subject, []);
-    subjectMap.get(subject).push(record);
+  (records || []).forEach((record) => {
+    const values = keys.map((key) => record[key] || "—");
+    const groupKey = values.join("|||");
+    if (!groups.has(groupKey)) groups.set(groupKey, { values, records: [] });
+    groups.get(groupKey).records.push(record);
   });
 
-  const subjectRows = Array.from(subjectMap.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([subject, subjectRecords]) => {
-      const metrics = calculatePerformanceMetrics(subjectRecords, scoringRules);
-      return `
-        <tr>
-          <td>${escapeHtml(subject)}</td>
-          <td>${metrics.total}</td>
-          <td>${metrics.correct}</td>
-          <td>${metrics.wrong}</td>
-          <td>${metrics.skipped}</td>
-          <td>${formatScoreDisplay(metrics)}</td>
-          <td>${metrics.marks.toFixed(1)}%</td>
-          <td>${escapeHtml(metrics.grade)}</td>
-          <td>${metrics.gradePoint}</td>
-          <td><span class="badge ${metrics.passed ? "bg-success" : "bg-danger"}">${metrics.passed ? "Pass" : "Fail"}</span></td>
-        </tr>
-      `;
+  return Array.from(groups.values())
+    .map((entry) => ({
+      values: entry.values,
+      metrics: calculatePerformanceMetrics(entry.records, scoringRules),
+    }))
+    .filter((entry) => !wrongOnly || entry.metrics.wrong > 0)
+    .sort((a, b) => {
+      if (wrongOnly && b.metrics.wrong !== a.metrics.wrong) return b.metrics.wrong - a.metrics.wrong;
+      return a.values.join(" ").localeCompare(b.values.join(" "));
     });
+}
 
-  if (!subjectRows.length) {
-    return `<div class="text-muted small">No subject data available for the current filter.</div>`;
-  }
-
+function renderPerformanceTableSection(title, columns, rows, emptyMessage) {
   return `
-    <div class="table-responsive">
-      <table class="table table-sm align-middle mb-0">
-        <thead>
-          <tr>
-            <th>Subject</th>
-            <th>Questions</th>
-            <th>Correct</th>
-            <th>Wrong</th>
-            <th>Skipped</th>
-            <th>Score</th>
-            <th>Score %</th>
-            <th>Grade</th>
-            <th>Point</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>${subjectRows.join("")}</tbody>
-      </table>
+    <div class="mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="fw-bold mb-0">${escapeHtml(title)}</h6>
+        <span class="text-muted small">${rows.length} row${rows.length === 1 ? "" : "s"}</span>
+      </div>
+      ${rows.length ? `
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>
+            </thead>
+            <tbody>${rows.join("")}</tbody>
+          </table>
+        </div>
+      ` : `<div class="text-muted small">${escapeHtml(emptyMessage)}</div>`}
     </div>
   `;
+}
+
+function renderSubjectStatsTable(records, scoringRules) {
+  const subjectRows = buildGroupedPerformanceRows(records, ["subject"], scoringRules)
+    .map(({ values, metrics }) => `
+      <tr>
+        <td>${escapeHtml(values[0])}</td>
+        <td>${metrics.total}</td>
+        <td>${metrics.correct}</td>
+        <td>${metrics.wrong}</td>
+        <td>${metrics.skipped}</td>
+        <td>${formatScoreDisplay(metrics)}</td>
+        <td>${metrics.marks.toFixed(1)}%</td>
+        <td>${escapeHtml(metrics.grade)}</td>
+        <td>${metrics.gradePoint}</td>
+        <td><span class="badge ${metrics.passed ? "bg-success" : "bg-danger"}">${metrics.passed ? "Pass" : "Fail"}</span></td>
+      </tr>
+    `);
+
+  const chapterRows = buildGroupedPerformanceRows(records, ["subject", "chapter"], scoringRules, { wrongOnly: true })
+    .map(({ values, metrics }) => `
+      <tr>
+        <td>${escapeHtml(values[0])}</td>
+        <td>${escapeHtml(values[1])}</td>
+        <td>${metrics.total}</td>
+        <td>${metrics.wrong}</td>
+        <td>${metrics.skipped}</td>
+        <td>${metrics.correct}</td>
+        <td>${metrics.marks.toFixed(1)}%</td>
+      </tr>
+    `);
+
+  const topicRows = buildGroupedPerformanceRows(records, ["subject", "chapter", "topic"], scoringRules, { wrongOnly: true })
+    .map(({ values, metrics }) => `
+      <tr>
+        <td>${escapeHtml(values[0])}</td>
+        <td>${escapeHtml(values[1])}</td>
+        <td>${escapeHtml(values[2])}</td>
+        <td>${metrics.total}</td>
+        <td>${metrics.wrong}</td>
+        <td>${metrics.skipped}</td>
+        <td>${metrics.correct}</td>
+        <td>${metrics.marks.toFixed(1)}%</td>
+      </tr>
+    `);
+
+  const subtopicRows = buildGroupedPerformanceRows(records, ["subject", "chapter", "topic", "subtopic"], scoringRules, { wrongOnly: true })
+    .map(({ values, metrics }) => `
+      <tr>
+        <td>${escapeHtml(values[0])}</td>
+        <td>${escapeHtml(values[1])}</td>
+        <td>${escapeHtml(values[2])}</td>
+        <td>${escapeHtml(values[3])}</td>
+        <td>${metrics.total}</td>
+        <td>${metrics.wrong}</td>
+        <td>${metrics.skipped}</td>
+        <td>${metrics.correct}</td>
+        <td>${metrics.marks.toFixed(1)}%</td>
+      </tr>
+    `);
+
+  return [
+    renderPerformanceTableSection(
+      "Per Subject Stats",
+      ["Subject", "Questions", "Correct", "Wrong", "Skipped", "Score", "Score %", "Grade", "Point", "Status"],
+      subjectRows,
+      "No subject data available for the current filter."
+    ),
+    renderPerformanceTableSection(
+      "Chapter Stats",
+      ["Subject", "Chapter", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
+      chapterRows,
+      "No chapters with wrong answers for the current filter."
+    ),
+    renderPerformanceTableSection(
+      "Topic Stats",
+      ["Subject", "Chapter", "Topic", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
+      topicRows,
+      "No topics with wrong answers for the current filter."
+    ),
+    renderPerformanceTableSection(
+      "Subtopic Stats",
+      ["Subject", "Chapter", "Topic", "Subtopic", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
+      subtopicRows,
+      "No subtopics with wrong answers for the current filter."
+    ),
+  ].join("");
 }
 
 function renderQuestionTable(records) {
@@ -1727,6 +1815,7 @@ function renderQuestionTable(records) {
     <tr>
       <td>${record.questionNumber}</td>
       <td class="question-field question-field-subject">${escapeHtml(record.subject || "—")}</td>
+      <td class="question-field question-field-chapter">${escapeHtml(record.chapter || "—")}</td>
       <td class="question-field question-field-topic">${escapeHtml(record.topic || "—")}</td>
       <td class="question-field question-field-subtopic">${escapeHtml(record.subtopic || "—")}</td>
       <td class="question-field question-field-question">${escapeHtml(record.questionText || "—")}</td>
@@ -1745,6 +1834,7 @@ function renderQuestionTable(records) {
           <tr>
             <th><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="questionNumber">Q No</button></th>
             <th class="question-field question-field-subject"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="subject">Subject</button></th>
+            <th class="question-field question-field-chapter"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="chapter">Chapter</button></th>
             <th class="question-field question-field-topic"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="topic">Topic</button></th>
             <th class="question-field question-field-subtopic"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="subtopic">Subtopic</button></th>
             <th class="question-field question-field-question"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="questionText">Question</button></th>
@@ -1764,6 +1854,7 @@ function renderQuestionTable(records) {
 function initSingleTestInsights() {
   const toggle = document.getElementById("wrongOnlyToggle");
   const subjectFilter = document.getElementById("subjectFilter");
+  const chapterFilter = document.getElementById("chapterFilter");
   const topicFilter = document.getElementById("topicFilter");
   const subtopicFilter = document.getElementById("subtopicFilter");
   const status = document.getElementById("question-filter-status");
@@ -1783,7 +1874,7 @@ function initSingleTestInsights() {
   const questionItems = Array.from(document.querySelectorAll(".question-item"));
 
   if (
-    !toggle || !status || !subjectFilter || !topicFilter || !subtopicFilter ||
+    !toggle || !status || !subjectFilter || !chapterFilter || !topicFilter || !subtopicFilter ||
     !chartTypeSelect || !chartGroupSelect || !scoreCorrectInput || !scoreWrongInput ||
     !scoreSkippedInput || !statsCards || !subjectStatsTable || !chartCanvas || !questionsCardView || !questionsTableView
   ) {
@@ -1796,16 +1887,19 @@ function initSingleTestInsights() {
 
   const getFilters = () => ({
     subjects: getSelectedValues(subjectFilter),
+    chapters: getSelectedValues(chapterFilter),
     topics: getSelectedValues(topicFilter),
     subtopics: getSelectedValues(subtopicFilter),
   });
 
   const updateFilterOptions = (filters) => {
     const subjectValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "subject").map((record) => record.subject).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const chapterValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "chapter").map((record) => record.chapter).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const topicValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "topic").map((record) => record.topic).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const subtopicValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "subtopic").map((record) => record.subtopic).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
     updateMultiSelectOptions(subjectFilter, subjectValues, "No matching subjects", filters.subjects);
+    updateMultiSelectOptions(chapterFilter, chapterValues, "No matching chapters", filters.chapters);
     updateMultiSelectOptions(topicFilter, topicValues, "No matching topics", filters.topics);
     updateMultiSelectOptions(subtopicFilter, subtopicValues, "No matching subtopics", filters.subtopics);
   };
@@ -2020,6 +2114,7 @@ function initSingleTestInsights() {
     };
     const visibleRecords = currentTestQuestionsData.filter((record) => (
       matchesMultiValueFilter(record.subject, syncedFilters.subjects) &&
+      matchesMultiValueFilter(record.chapter, syncedFilters.chapters) &&
       matchesMultiValueFilter(record.topic, syncedFilters.topics) &&
       matchesMultiValueFilter(record.subtopic, syncedFilters.subtopics)
     ));
@@ -2030,6 +2125,7 @@ function initSingleTestInsights() {
     const activeFilters = [];
     if (toggle.checked) activeFilters.push("wrong and skipped only");
     if (syncedFilters.subjects.length) activeFilters.push(`Subjects: ${syncedFilters.subjects.join(", ")}`);
+    if (syncedFilters.chapters.length) activeFilters.push(`Chapters: ${syncedFilters.chapters.join(", ")}`);
     if (syncedFilters.topics.length) activeFilters.push(`Topics: ${syncedFilters.topics.join(", ")}`);
     if (syncedFilters.subtopics.length) activeFilters.push(`Subtopics: ${syncedFilters.subtopics.join(", ")}`);
 
@@ -2045,6 +2141,7 @@ function initSingleTestInsights() {
   [
     toggle,
     subjectFilter,
+    chapterFilter,
     topicFilter,
     subtopicFilter,
     chartTypeSelect,
@@ -2146,6 +2243,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       userAnswer = result[`Generic_Q${questionNumber}`];
     }
     const subject = normalizeFilterValue(question.Subject || question.section);
+    const chapter = normalizeFilterValue(question.Chapter);
     const topic = normalizeFilterValue(question.Topic);
     const subtopic = normalizeFilterValue(question.Subtopic);
     const isSkipped = !userAnswer || userAnswer === "" || userAnswer === "S";
@@ -2172,6 +2270,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
     currentTestQuestionsData.push({
       questionNumber,
       subject,
+      chapter,
       topic,
       subtopic,
       questionText: question.Question?.trim() || "",
@@ -2191,6 +2290,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
            data-is-correct="${isCorrect ? "true" : "false"}"
            data-status="${status}"
            data-subject="${escapeHtml(subject)}"
+           data-chapter="${escapeHtml(chapter)}"
            data-topic="${escapeHtml(topic)}"
            data-subtopic="${escapeHtml(subtopic)}">
         <div class="d-flex justify-content-between mb-3">
@@ -2199,9 +2299,10 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
             ${status === "correct" ? "Correct" : status === "skipped" ? "Skipped" : "Wrong"}
           </span>
         </div>
-        ${(subject || topic || subtopic) ? `
+        ${(subject || chapter || topic || subtopic) ? `
           <div class="d-flex flex-wrap gap-2 mb-3">
             ${subject ? `<span class="badge bg-light text-dark border question-field question-field-subject">Subject: ${escapeHtml(subject)}</span>` : ""}
+            ${chapter ? `<span class="badge bg-light text-dark border question-field question-field-chapter">Chapter: ${escapeHtml(chapter)}</span>` : ""}
             ${topic ? `<span class="badge bg-light text-dark border question-field question-field-topic">Topic: ${escapeHtml(topic)}</span>` : ""}
             ${subtopic ? `<span class="badge bg-light text-dark border question-field question-field-subtopic">Subtopic: ${escapeHtml(subtopic)}</span>` : ""}
           </div>
@@ -2314,17 +2415,22 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
           <div class="small text-muted">Default scoring: +3 correct, -1 wrong, 0 skipped</div>
         </div>
         <div class="row g-3 mb-3 no-print">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label small text-muted mb-1" for="subjectFilter">Subjects</label>
             <select class="form-select report-multiselect" id="subjectFilter" multiple size="5"></select>
             <div class="form-text">Select one or more subjects.</div>
           </div>
-          <div class="col-md-4">
-            <label class="form-label small text-muted mb-1" for="topicFilter">Topics</label>
-            <select class="form-select report-multiselect" id="topicFilter" multiple size="5"></select>
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1" for="chapterFilter">Chapters</label>
+            <select class="form-select report-multiselect" id="chapterFilter" multiple size="5"></select>
             <div class="form-text">Options adjust to your current subject selection.</div>
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1" for="topicFilter">Topics</label>
+            <select class="form-select report-multiselect" id="topicFilter" multiple size="5"></select>
+            <div class="form-text">Options adjust to the current chapter selection.</div>
+          </div>
+          <div class="col-md-3">
             <label class="form-label small text-muted mb-1" for="subtopicFilter">Subtopics</label>
             <select class="form-select report-multiselect" id="subtopicFilter" multiple size="5"></select>
             <div class="form-text">Use Ctrl/Cmd-click to pick multiple values.</div>
@@ -2343,6 +2449,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
             <label class="form-label small text-muted mb-1" for="chartGroupFilter">Chart Grouping</label>
             <select class="form-select" id="chartGroupFilter">
               <option value="subject">Subject Wise</option>
+              <option value="chapter">Chapter Wise</option>
               <option value="topic">Topic Wise</option>
               <option value="subtopic">Subtopic Wise</option>
             </select>
@@ -2383,8 +2490,8 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
         <div class="card bg-light border-0">
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-3">
-              <h6 class="fw-bold mb-0">Per Subject Stats</h6>
-              <span class="text-muted small">Grade points are used for CGPA. Passing requires 33% in each subject.</span>
+              <h6 class="fw-bold mb-0">Performance Tables</h6>
+              <span class="text-muted small">Subjects show all rows. Chapter, topic, and subtopic tables show wrong-only rows by default.</span>
             </div>
             <div id="subjectStatsTable"></div>
           </div>
@@ -2462,9 +2569,10 @@ function initSingleTestCSVExport(testName, studentName) {
 
   detailBtn.addEventListener("click", () => {
     const rows = [
-      ["Subject", "Topic", "Subtopic", "Question", "Status"],
+      ["Subject", "Chapter", "Topic", "Subtopic", "Question", "Status"],
       ...currentTestQuestionsData.map(q => [
         q.subject,
+        q.chapter,
         q.topic,
         q.subtopic,
         q.questionText,
@@ -2476,8 +2584,8 @@ function initSingleTestCSVExport(testName, studentName) {
 
   summaryBtn.addEventListener("click", () => {
     const rows = [
-      ["Subject", "Topic", "Num_Correct", "Num_Wrong", "Num_Skipped", "Questions"],
-      ...buildCurrentTestSummaryData().map((s) => [s.subject, s.topic, s.correct, s.wrong, s.skipped, s.total]),
+      ["Subject", "Chapter", "Topic", "Num_Correct", "Num_Wrong", "Num_Skipped", "Questions"],
+      ...buildCurrentTestSummaryData().map((s) => [s.subject, s.chapter, s.topic, s.correct, s.wrong, s.skipped, s.total]),
     ];
     downloadCSV(`${safeTestName}_Summary.csv`, rows);
   });
