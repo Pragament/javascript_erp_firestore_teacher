@@ -645,6 +645,7 @@ class ReportAIChatPanel {
     this.header = document.getElementById("aiChatHeader");
     this.toggleBtn = document.getElementById("aiChatToggle");
     this.clearBtn = document.getElementById("aiChatClear");
+    this.fullscreenBtn = document.getElementById("aiChatFullscreen");
     this.messagesEl = document.getElementById("aiChatMessages");
     this.inputEl = document.getElementById("aiChatInput");
     this.sendBtn = document.getElementById("aiChatSend");
@@ -693,6 +694,10 @@ class ReportAIChatPanel {
     if (this.clearBtn) this.clearBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.clearChat();
+    });
+    if (this.fullscreenBtn) this.fullscreenBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleFullscreen();
     });
     if (this.loadBtn) this.loadBtn.addEventListener("click", () => this.loadModel());
     if (this.deleteBtn) this.deleteBtn.addEventListener("click", () => this.deleteModel());
@@ -1107,6 +1112,16 @@ class ReportAIChatPanel {
         <span class="message-time">Just now</span>
       </div>
     `;
+  }
+
+  toggleFullscreen() {
+    const isFullscreen = this.container.classList.toggle("fullscreen");
+    const icon = this.fullscreenBtn?.querySelector("i");
+    if (icon) {
+      icon.classList.toggle("fa-expand", !isFullscreen);
+      icon.classList.toggle("fa-compress", isFullscreen);
+    }
+    this.fullscreenBtn?.setAttribute("title", isFullscreen ? "Exit fullscreen" : "Toggle fullscreen");
   }
 
   handleQuickAction(action) {
