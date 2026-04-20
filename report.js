@@ -226,6 +226,99 @@ async function fetchQuestionPaper(questionPaperID) {
   return { id: docSnap.id, ...docSnap.data() };
 }
 
+function buildQuestionRecordsForResult(test, result, questionPaper) {
+  let questions = questionPaper?.questions || test?.questions || [];
+  const records = [];
+
+  if (!questions || questions.length === 0) {
+    questions = [];
+    for (const key in (result || {})) {
+      if (key.includes("_Q") || key.startsWith("Q")) {
+        let section = "";
+        let questionNumber;
+        if (key.includes("_Q")) {
+          const match = key.match(/(.+)_Q(\d+)/);
+          if (match) [, section, questionNumber] = match;
+        } else {
+          const match = key.match(/Q(\d+)/);
+          if (match) {
+            section = "General";
+            [, questionNumber] = match;
+          }
+        }
+        if (questionNumber) {
+          const qNum = parseInt(questionNumber, 10);
+          questions[qNum - 1] = {
+            questionNumber: qNum,
+            section,
+            isCorrect: result[key] === "R",
+          };
+        }
+      }
+    }
+    questions = questions.filter((question) => question !== undefined);
+  }
+
+  questions.forEach((question, index) => {
+    const parsedQuestionNumber = String(question.subjectname_questionnumber || "").match(/_(\d+)$/);
+    const questionNumber = parsedQuestionNumber
+      ? Number(parsedQuestionNumber[1])
+      : (Number.isFinite(Number(question.questionNumber)) ? Number(question.questionNumber) : index + 1);
+    const subject = normalizeFilterValue(question.Subject || question.section || "General");
+
+    const candidateKeys = [];
+    if (question.subjectname_questionnumber) {
+      candidateKeys.push(String(question.subjectname_questionnumber).replace("_", "_Q"));
+    }
+    candidateKeys.push(`${subject}_Q${questionNumber}`);
+    candidateKeys.push(`Generic_Q${questionNumber}`);
+    candidateKeys.push(`Q${questionNumber}`);
+
+    let userAnswer = candidateKeys.find((key) => Object.prototype.hasOwnProperty.call(result || {}, key))
+      ? result[candidateKeys.find((key) => Object.prototype.hasOwnProperty.call(result || {}, key))]
+      : null;
+
+    if (userAnswer == null) {
+      const suffix = `_Q${questionNumber}`;
+      const candidates = Object.keys(result || {}).filter((key) => key.endsWith(suffix));
+      if (candidates.length === 1) userAnswer = result[candidates[0]];
+      else {
+        const sameSubject = candidates.find((key) => key.startsWith(`${subject}_Q`));
+        if (sameSubject) userAnswer = result[sameSubject];
+      }
+    }
+
+    const isCorrect = question.isCorrect || userAnswer === "R";
+    const status = getQuestionStatus(userAnswer, isCorrect);
+
+    records.push({
+      questionNumber,
+      subject,
+      status,
+      isCorrect,
+    });
+  });
+
+  return records;
+}
+
+function buildSubjectStatsFromQuestionRecords(records, scoringRules = DEFAULT_SCORING_RULES) {
+  const bySubject = new Map();
+
+  (records || []).forEach((record) => {
+    const subject = record.subject || "General";
+    if (!bySubject.has(subject)) bySubject.set(subject, []);
+    bySubject.get(subject).push(record);
+  });
+
+  return Array.from(bySubject.entries())
+    .map(([subject, subjectRecords]) => ({
+      subject,
+      ...calculatePerformanceMetrics(subjectRecords, scoringRules),
+    }))
+    .sort((a, b) => a.subject.localeCompare(b.subject));
+}
+
 function extractOptionText(optionValue) {
   if (optionValue == null) return "";
   if (typeof optionValue === "string") return optionValue;
@@ -355,6 +448,11 @@ ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone
   for (const result of results) {
     const testId = result.testId;
     const test = testsById.get(testId) || {};
+    const questionPaper = test.questionPaperID
+      ? await fetchQuestionPaper(test.questionPaperID)
+      : null;
+    const questionRecords = buildQuestionRecordsForResult(test, result, questionPaper);
+    const subjectStats = buildSubjectStatsFromQuestionRecords(questionRecords);
 
     const scoreDetails = typeof calculateScoreDetails === "function"
       ? calculateScoreDetails(result)
@@ -369,6 +467,7 @@ ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone
       percent: scoreDetails.percent,
       correct: scoreDetails.correct,
       total: scoreDetails.total,
+      subjectStats,
     });
   }
 
@@ -2393,6 +2492,142 @@ function initSingleTestAIChat() {
   }
 }
 
+function buildStudentProgressSubjectSummary(rows) {
+  const subjectMap = new Map();
+
+  rows.forEach((row) => {
+    (row.subjectStats || []).forEach((subjectStat) => {
+      const subject = subjectStat.subject || "General";
+      if (!subjectMap.has(subject)) {
+        subjectMap.set(subject, {
+          subject,
+          tests: [],
+          correct: 0,
+          wrong: 0,
+          skipped: 0,
+          totalQuestions: 0,
+        });
+      }
+
+      const entry = subjectMap.get(subject);
+      entry.tests.push({
+        testName: row.testName,
+        testId: row.testId,
+        dateObj: row.dateObj,
+        testDateRaw: row.testDateRaw,
+        percent: subjectStat.marks,
+        scoreText: formatScoreDisplay(subjectStat),
+      });
+      entry.correct += subjectStat.correct;
+      entry.wrong += subjectStat.wrong;
+      entry.skipped += subjectStat.skipped;
+      entry.totalQuestions += subjectStat.total;
+    });
+  });
+
+  return Array.from(subjectMap.values())
+    .map((entry) => {
+      const tests = entry.tests
+        .slice()
+        .sort((a, b) => {
+          const at = a.dateObj?.getTime?.();
+          const bt = b.dateObj?.getTime?.();
+          const aValid = typeof at === "number" && !Number.isNaN(at);
+          const bValid = typeof bt === "number" && !Number.isNaN(bt);
+          if (aValid && bValid) return at - bt;
+          if (aValid) return -1;
+          if (bValid) return 1;
+          return String(a.testName).localeCompare(String(b.testName));
+        });
+      const percents = tests.map((test) => Number(test.percent) || 0);
+      const averagePercent = percents.length
+        ? percents.reduce((sum, value) => sum + value, 0) / percents.length
+        : 0;
+      const bestPercent = percents.length ? Math.max(...percents) : 0;
+      const latestPercent = percents.length ? percents[percents.length - 1] : 0;
+      const firstPercent = percents.length ? percents[0] : 0;
+      return {
+        ...entry,
+        tests,
+        testsTaken: tests.length,
+        averagePercent,
+        bestPercent,
+        latestPercent,
+        improvement: latestPercent - firstPercent,
+      };
+    })
+    .sort((a, b) => a.subject.localeCompare(b.subject));
+}
+
+function renderSubjectProgressSummaryTable(subjectSummary) {
+  if (!subjectSummary.length) {
+    return `<div class="text-muted small">No subject-wise progress data available yet.</div>`;
+  }
+
+  const rowsHtml = subjectSummary.map((subject) => `
+    <tr>
+      <td>${escapeHtml(subject.subject)}</td>
+      <td>${subject.testsTaken}</td>
+      <td>${subject.correct}</td>
+      <td>${subject.wrong}</td>
+      <td>${subject.skipped}</td>
+      <td>${subject.totalQuestions}</td>
+      <td>${subject.averagePercent.toFixed(1)}%</td>
+      <td>${subject.bestPercent.toFixed(1)}%</td>
+      <td>${subject.latestPercent.toFixed(1)}%</td>
+      <td class="${subject.improvement >= 0 ? "text-success" : "text-danger"}">${subject.improvement >= 0 ? "+" : ""}${subject.improvement.toFixed(1)}%</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>Tests</th>
+            <th>Correct</th>
+            <th>Wrong</th>
+            <th>Skipped</th>
+            <th>Questions</th>
+            <th>Average</th>
+            <th>Best</th>
+            <th>Latest</th>
+            <th>Trend</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function formatSubjectScoreSummary(subjectStats) {
+  if (!subjectStats || !subjectStats.length) return "—";
+  return subjectStats
+    .map((subjectStat) => `${subjectStat.subject}: ${subjectStat.marks.toFixed(1)}% (${formatScoreDisplay(subjectStat)})`)
+    .join(" | ");
+}
+
+function formatSubjectColumnKey(subject) {
+  return String(subject || "general")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function getGradeBadgeClass(marks) {
+  const grade = getGradeDetails(marks);
+  if (grade.grade === "A1") return "bg-success";
+  if (grade.grade === "A2") return "bg-success";
+  if (grade.grade === "B1") return "bg-info text-dark";
+  if (grade.grade === "B2") return "bg-info text-dark";
+  if (grade.grade === "C1") return "bg-primary";
+  if (grade.grade === "C2") return "bg-primary";
+  if (grade.grade === "D") return "bg-warning text-dark";
+  return "bg-danger";
+}
+
 function renderStudentProgress(student, studentId, rows) {
   currentSingleTestAIContext = null;
   if (reportAIChatPanel) {
@@ -2402,6 +2637,16 @@ function renderStudentProgress(student, studentId, rows) {
   const avg = taken > 0 ? Math.round(rows.reduce((sum, r) => sum + (Number(r.percent) || 0), 0) / taken) : 0;
   const best = taken > 0 ? Math.max(...rows.map((r) => Number(r.percent) || 0)) : 0;
   const latest = taken > 0 ? (Number(rows[taken - 1].percent) || 0) : 0;
+  const subjectSummary = buildStudentProgressSubjectSummary(rows);
+  const strongestSubject = subjectSummary.length
+    ? subjectSummary.reduce((bestEntry, entry) => (entry.averagePercent > bestEntry.averagePercent ? entry : bestEntry), subjectSummary[0])
+    : null;
+  const needsAttentionSubject = subjectSummary.length
+    ? subjectSummary.reduce((worstEntry, entry) => (entry.averagePercent < worstEntry.averagePercent ? entry : worstEntry), subjectSummary[0])
+    : null;
+  const improvingSubjectCount = subjectSummary.filter((entry) => entry.improvement > 0).length;
+  const consistentSubjectCount = subjectSummary.filter((entry) => entry.testsTaken >= 2).length;
+  const subjectColumnHeaders = subjectSummary.map((entry) => entry.subject);
   const studentName = student.name || "Student";
   const pageTitle = `${studentName} Progress Summary`;
   const pageDescription = `${studentName}'s progress summary shows ${taken} tests, ${avg}% average score, ${best}% best score, and ${latest}% latest score. Analyze score trends by test date, compare results across tests, and use the report to help the student, parent, and teacher prioritize revision topics.`;
@@ -2473,17 +2718,40 @@ function renderStudentProgress(student, studentId, rows) {
         : 0;
       const reportHref = `report.html?testId=${encodeURIComponent(r.testId)}&studentId=${encodeURIComponent(studentId)}`;
       const badgeClass = (Number(r.percent) || 0) >= 70 ? "bg-success" : "bg-danger";
+      const totalGrade = getGradeDetails(Number(r.percent) || 0);
+      const totalGradeBadgeClass = getGradeBadgeClass(Number(r.percent) || 0);
       const correctText =
         typeof r.correct === "number" && typeof r.total === "number"
           ? `${r.correct}/${r.total}`
           : "—";
+      const totalScoreText =
+        typeof r.correct === "number" && typeof r.total === "number"
+          ? `${r.percent}%`
+          : `${r.percent}%`;
+      const subjectScoreCells = subjectColumnHeaders.map((subjectName) => {
+        const subjectStat = (r.subjectStats || []).find((entry) => entry.subject === subjectName);
+        const percent = subjectStat ? Number(subjectStat.marks) || 0 : -1;
+        const grade = subjectStat ? getGradeDetails(percent) : null;
+        const gradeBadgeClass = subjectStat ? getGradeBadgeClass(percent) : "";
+        const text = subjectStat
+          ? `${subjectStat.marks.toFixed(1)}% (${formatScoreDisplay(subjectStat)})`
+          : "—";
+        return `<td data-order="${percent}" class="small">
+          ${subjectStat ? `<span class="badge ${gradeBadgeClass}">${escapeHtml(grade.grade)}</span> ` : ""}
+          <span class="${percent >= 91 ? "text-success fw-semibold" : percent >= 71 ? "text-primary fw-semibold" : percent >= 33 ? "text-warning fw-semibold" : "text-danger fw-semibold"}">${escapeHtml(text)}</span>
+        </td>`;
+      }).join("");
 
       return `
         <tr>
           <td data-order="${sortableDate}">${escapeHtml(displayDate)}</td>
           <td>${escapeHtml(r.testName || "Test")}</td>
-          <td><span class="badge ${badgeClass}">${escapeHtml(r.percent)}%</span></td>
-          <td>${escapeHtml(correctText)}</td>
+          <td data-order="${Number(r.percent) || 0}">
+            <span class="badge ${badgeClass}">${escapeHtml(totalScoreText)}</span>
+            <span class="badge ${totalGradeBadgeClass} ms-1">${escapeHtml(totalGrade.grade)}</span>
+          </td>
+          <td class="${(Number(r.percent) || 0) >= 70 ? "text-success fw-semibold" : "text-danger fw-semibold"}">${escapeHtml(correctText)}</td>
+          ${subjectScoreCells}
           <td>
             <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none" href="${reportHref}" target="_blank">
               View
@@ -2515,14 +2783,74 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
       </div>
     </div>
 
+    <div class="row g-3 mb-4">
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Subjects Tracked</div>
+            <div class="report-stat-value">${subjectSummary.length}</div>
+            <div class="small text-muted">Subjects seen across all tests</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Strongest Subject</div>
+            <div class="report-stat-value" style="font-size:1.35rem">${escapeHtml(strongestSubject?.subject || "—")}</div>
+            <div class="small text-muted">${strongestSubject ? `${strongestSubject.averagePercent.toFixed(1)}% average` : "No subject data yet"}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Needs Attention</div>
+            <div class="report-stat-value" style="font-size:1.35rem">${escapeHtml(needsAttentionSubject?.subject || "—")}</div>
+            <div class="small text-muted">${needsAttentionSubject ? `${needsAttentionSubject.averagePercent.toFixed(1)}% average` : "No subject data yet"}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Improving Subjects</div>
+            <div class="report-stat-value">${improvingSubjectCount}</div>
+            <div class="small text-muted">${consistentSubjectCount} subjects have 2+ tests to compare</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+          <div>
+            <h5 class="fw-bold mb-1">Progress Across Tests</h5>
+            <small class="text-muted">Compare total score and subject-wise score by test date. Click a point or bar to open that test report.</small>
+          </div>
+          <div class="d-flex gap-2 align-items-center">
+            <label class="small text-muted mb-0" for="subjectProgressChartType">Chart Type</label>
+            <select id="subjectProgressChartType" class="form-select form-select-sm" style="min-width:150px">
+              <option value="line">Line</option>
+              <option value="bar">Bar</option>
+            </select>
+          </div>
+        </div>
+        <div style="height:360px">
+          <canvas id="subjectProgressChart"></canvas>
+        </div>
+      </div>
+    </div>
+
     <div class="card shadow-sm mb-4">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="fw-bold mb-0">Score Progress</h5>
-          <small class="text-muted">Click a point to open that test report</small>
+          <h5 class="fw-bold mb-0">Subject-wise Progress Stats</h5>
+          <small class="text-muted">Average, best, latest, and trend across tests for each subject.</small>
         </div>
-        <div style="height:320px">
-          <canvas id="progressChart"></canvas>
+        <div id="subjectProgressSummaryTable">
+          ${renderSubjectProgressSummaryTable(subjectSummary)}
         </div>
       </div>
     </div>
@@ -2541,8 +2869,9 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
               <tr>
                 <th>Date</th>
                 <th>Test</th>
-                <th>Score</th>
+                <th>Total Score</th>
                 <th>Correct</th>
+                ${subjectColumnHeaders.map((subjectName) => `<th>${escapeHtml(subjectName)}</th>`).join("")}
                 <th>Report</th>
               </tr>
             </thead>
@@ -2555,9 +2884,167 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
     </div>
   `);
 
-  initStudentProgressChart(studentId, rows);
+  initSubjectProgressChart(studentId, rows, subjectSummary);
   initResultsTable();
   initProgressCSVExport(studentId, rows, student.name);
+}
+
+function initSubjectProgressChart(studentId, rows, subjectSummary) {
+  const canvas = document.getElementById("subjectProgressChart");
+  const chartTypeSelect = document.getElementById("subjectProgressChartType");
+  if (!canvas || !chartTypeSelect || typeof Chart === "undefined") return;
+
+  const chartRows = [...rows].sort((a, b) => {
+    const at = a.dateObj?.getTime?.();
+    const bt = b.dateObj?.getTime?.();
+    const aValid = typeof at === "number" && !Number.isNaN(at);
+    const bValid = typeof bt === "number" && !Number.isNaN(bt);
+    if (aValid && bValid) return at - bt;
+    if (aValid) return -1;
+    if (bValid) return 1;
+    return String(a.testName).localeCompare(String(b.testName));
+  });
+  const dateLabels = chartRows.map((row) => formatDate(row.dateObj, row.testDateRaw));
+  let chart = null;
+
+  const palette = [
+    "#1f6feb",
+    "#16a085",
+    "#dc2626",
+    "#f59e0b",
+    "#7c3aed",
+    "#0f766e",
+    "#db2777",
+    "#2563eb",
+  ];
+
+  const buildTotalDataset = () => ({
+    label: "Total",
+    data: chartRows.map((row) => Number(row.percent) || 0),
+    borderColor: "#111827",
+    backgroundColor: "rgba(17, 24, 39, 0.2)",
+    pointBackgroundColor: "#111827",
+    tension: 0.25,
+    spanGaps: true,
+    fill: false,
+    borderWidth: 3,
+  });
+
+  const buildLineDatasets = () => [buildTotalDataset(), ...subjectSummary.map((subject, index) => {
+    const percentByTestId = new Map(subject.tests.map((test) => [test.testId, Number(test.percent) || 0]));
+    const color = palette[index % palette.length];
+    return {
+      label: subject.subject,
+      data: chartRows.map((row) => (percentByTestId.has(row.testId) ? percentByTestId.get(row.testId) : null)),
+      borderColor: color,
+      backgroundColor: `${color}33`,
+      pointBackgroundColor: color,
+      tension: 0.25,
+      spanGaps: true,
+      fill: false,
+    };
+  })];
+
+  const buildBarDatasets = () => {
+    const totalDataset = {
+      label: "Total",
+      data: chartRows.map((row) => Number(row.percent) || 0),
+      borderColor: "#111827",
+      backgroundColor: "rgba(17, 24, 39, 0.75)",
+      borderWidth: 1,
+    };
+    const subjectDatasets = subjectSummary.map((subject, index) => {
+      const color = palette[index % palette.length];
+      const percentByTestId = new Map(subject.tests.map((test) => [test.testId, Number(test.percent) || 0]));
+      return {
+        label: subject.subject,
+        data: chartRows.map((row) => (percentByTestId.has(row.testId) ? percentByTestId.get(row.testId) : null)),
+        borderColor: color,
+        backgroundColor: `${color}bb`,
+        borderWidth: 1,
+      };
+    });
+    return [totalDataset, ...subjectDatasets];
+  };
+
+  const buildTooltipTitle = (items) => {
+    const row = chartRows[items?.[0]?.dataIndex];
+    return `${formatDate(row?.dateObj, row?.testDateRaw)}${row?.testName ? ` | ${row.testName}` : ""}`;
+  };
+
+  const buildTooltipLabel = (item) => {
+    const row = chartRows[item.dataIndex];
+    if (!row) return `${item.dataset.label}: ${item.formattedValue || "0"}%`;
+    if (item.dataset.label === "Total") {
+      const correctText =
+        typeof row.correct === "number" && typeof row.total === "number"
+          ? `${row.correct}/${row.total}`
+          : "—";
+      return `Total: ${item.formattedValue || "0"}% (${correctText})`;
+    }
+    const subjectStat = (row.subjectStats || []).find((entry) => entry.subject === item.dataset.label);
+    return subjectStat
+      ? `${item.dataset.label}: ${item.formattedValue || "0"}% (${formatScoreDisplay(subjectStat)})`
+      : `${item.dataset.label}: ${item.formattedValue || "0"}%`;
+  };
+
+  const renderChart = () => {
+    if (chart) chart.destroy();
+    const type = chartTypeSelect.value || "line";
+    const isBar = type === "bar";
+    return {
+      type,
+      labels: dateLabels,
+      datasets: isBar ? buildBarDatasets() : buildLineDatasets(),
+    };
+  };
+
+  const drawChart = () => {
+    if (chart) chart.destroy();
+    const config = renderChart();
+    chart = new Chart(canvas.getContext("2d"), {
+      type: config.type,
+      data: {
+        labels: config.labels,
+        datasets: config.datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              title: buildTooltipTitle,
+              label: buildTooltipLabel,
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { callback: (value) => `${value}%` },
+          },
+          x: {
+            ticks: { maxRotation: 0, minRotation: 0 },
+          },
+        },
+        onClick: (evt, elements) => {
+          if (!elements?.length) return;
+          const row = chartRows[elements[0].index];
+          if (!row?.testId) return;
+          const href = `report.html?testId=${encodeURIComponent(row.testId)}&studentId=${encodeURIComponent(studentId)}`;
+          window.open(href, "_blank");
+        },
+      },
+    });
+  };
+
+  chartTypeSelect.addEventListener("change", drawChart);
+  drawChart();
+  window.__studentSubjectProgressChart = chart;
 }
 
 function initStudentProgressChart(studentId, rows) {
