@@ -412,11 +412,120 @@ async function loadReportFromQueryParams() {
 let currentTestQuestionsData = [];
 let currentSingleTestAIContext = null;
 let reportAIChatPanel = null;
+const DEFAULT_SCORING_RULES = {
+  correct: 3,
+  wrong: -1,
+  skipped: 0,
+};
+const GRADE_SCALE = [
+  { min: 91, max: 100, grade: "A1", gradePoint: 10, pass: true },
+  { min: 81, max: 90, grade: "A2", gradePoint: 9, pass: true },
+  { min: 71, max: 80, grade: "B1", gradePoint: 8, pass: true },
+  { min: 61, max: 70, grade: "B2", gradePoint: 7, pass: true },
+  { min: 51, max: 60, grade: "C1", gradePoint: 6, pass: true },
+  { min: 41, max: 50, grade: "C2", gradePoint: 5, pass: true },
+  { min: 33, max: 40, grade: "D", gradePoint: 4, pass: true },
+  { min: 21, max: 32, grade: "E1", gradePoint: 0, pass: false },
+  { min: 0, max: 20, grade: "E2", gradePoint: 0, pass: false },
+];
 
-function buildCurrentTestSummaryData() {
+function getQuestionStatus(userAnswer, isCorrect) {
+  if (!userAnswer || userAnswer === "" || userAnswer === "S") return "skipped";
+  return isCorrect ? "correct" : "wrong";
+}
+
+function parseScoreInput(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getSelectedValues(select) {
+  if (!select) return [];
+  return Array.from(select.selectedOptions || [])
+    .map((option) => option.value)
+    .filter(Boolean);
+}
+
+function matchesMultiValueFilter(recordValue, selectedValues) {
+  return selectedValues.length === 0 || selectedValues.includes(recordValue || "");
+}
+
+function getScopedQuestionRecords(records, filters, excludeKey) {
+  return (records || []).filter((record) => {
+    if (excludeKey !== "subject" && !matchesMultiValueFilter(record.subject, filters.subjects || [])) return false;
+    if (excludeKey !== "topic" && !matchesMultiValueFilter(record.topic, filters.topics || [])) return false;
+    if (excludeKey !== "subtopic" && !matchesMultiValueFilter(record.subtopic, filters.subtopics || [])) return false;
+    return true;
+  });
+}
+
+function updateMultiSelectOptions(select, values, placeholder, selectedValues) {
+  if (!select) return;
+  const nextSelected = new Set((selectedValues || []).filter((value) => values.includes(value)));
+  const optionsHtml = values.length
+    ? values.map((value) => `<option value="${escapeHtml(value)}"${nextSelected.has(value) ? " selected" : ""}>${escapeHtml(value)}</option>`).join("")
+    : `<option value="" disabled>${escapeHtml(placeholder)}</option>`;
+  select.innerHTML = optionsHtml;
+}
+
+function getGradeDetails(marks) {
+  const normalizedMarks = Math.max(0, Math.min(100, Number(marks) || 0));
+  return GRADE_SCALE.find((entry) => normalizedMarks >= entry.min && normalizedMarks <= entry.max) || GRADE_SCALE[GRADE_SCALE.length - 1];
+}
+
+function calculatePerformanceMetrics(records, scoringRules) {
+  const counts = { correct: 0, wrong: 0, skipped: 0, total: 0 };
+
+  (records || []).forEach((record) => {
+    const status = record.status || "wrong";
+    if (status === "correct") counts.correct += 1;
+    else if (status === "skipped") counts.skipped += 1;
+    else counts.wrong += 1;
+    counts.total += 1;
+  });
+
+  const maxMarksPerQuestion = Math.max(Number(scoringRules.correct) || 0, 1);
+  const earnedMarks =
+    counts.correct * (Number(scoringRules.correct) || 0) +
+    counts.wrong * (Number(scoringRules.wrong) || 0) +
+    counts.skipped * (Number(scoringRules.skipped) || 0);
+  const maxMarks = counts.total * maxMarksPerQuestion;
+  const marks = maxMarks > 0 ? Math.max(0, Math.min(100, (earnedMarks / maxMarks) * 100)) : 0;
+  const grade = getGradeDetails(marks);
+
+  return {
+    ...counts,
+    earnedMarks,
+    maxMarks,
+    marks,
+    grade: grade.grade,
+    gradePoint: grade.gradePoint,
+    passed: grade.pass,
+  };
+}
+
+function formatScoreDisplay(metrics) {
+  const earned = Number(metrics?.earnedMarks || 0);
+  const max = Number(metrics?.maxMarks || 0);
+  return `${Number.isInteger(earned) ? earned : earned.toFixed(1)}/${Number.isInteger(max) ? max : max.toFixed(1)}`;
+}
+
+function getFieldToggleDefinitions() {
+  return [
+    { key: "subject", label: "Subject" },
+    { key: "topic", label: "Topic" },
+    { key: "subtopic", label: "Subtopic" },
+    { key: "question", label: "Question" },
+    { key: "options", label: "Options" },
+    { key: "answer", label: "Answers" },
+    { key: "explanation", label: "Explanation" },
+  ];
+}
+
+function buildCurrentTestSummaryData(records = currentTestQuestionsData) {
   const summaryMap = new Map();
 
-  currentTestQuestionsData.forEach((q) => {
+  records.forEach((q) => {
     const key = `${q.subject}|${q.topic}`;
     if (!summaryMap.has(key)) {
       summaryMap.set(key, {
@@ -424,6 +533,7 @@ function buildCurrentTestSummaryData() {
         topic: q.topic || "General",
         correct: 0,
         wrong: 0,
+        skipped: 0,
         total: 0,
         subtopics: new Set(),
       });
@@ -431,7 +541,8 @@ function buildCurrentTestSummaryData() {
 
     const entry = summaryMap.get(key);
     entry.total += 1;
-    if (q.isCorrect) entry.correct += 1;
+    if (q.status === "correct") entry.correct += 1;
+    else if (q.status === "skipped") entry.skipped += 1;
     else entry.wrong += 1;
     if (q.subtopic) entry.subtopics.add(q.subtopic);
   });
@@ -459,20 +570,20 @@ function buildSingleTestAIContext({ test, student, correct, total, scorePercent 
       .map((row) => {
         const subtopicText = row.subtopics.length ? `; subtopics: ${row.subtopics.join(", ")}` : "";
         //return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}, accuracy ${row.accuracy}%${subtopicText}`;
-        return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}`;
+        return `${row.subject} > ${row.topic}: correct ${row.correct}, wrong ${row.wrong}, skipped ${row.skipped}`;
       })
       .join("\n")
     : "No summary rows available.";
 
   const weakTopicsText = weakTopics.length
     ? weakTopics
-      .map((row, index) => `${index + 1}. ${row.subject} > ${row.topic} - wrong ${row.wrong}/${row.total}, accuracy ${row.accuracy}%`)
+      .map((row, index) => `${index + 1}. ${row.subject} > ${row.topic} - wrong ${row.wrong}/${row.total}, skipped ${row.skipped}, accuracy ${row.accuracy}%`)
       .join("\n")
     : "No weak topics detected. The student got every tracked topic correct.";
 
   const detailText = currentTestQuestionsData.length
     ? currentTestQuestionsData
-      .map((q) => `Q${q.questionNumber} | Subject: ${q.subject || "General"} | Topic: ${q.topic || "General"} | Subtopic: ${q.subtopic || "General"} | Result: ${q.isCorrect ? "Correct" : "Wrong"} | Question: ${q.questionText || "N/A"}`)
+      .map((q) => `Q${q.questionNumber} | Subject: ${q.subject || "General"} | Topic: ${q.topic || "General"} | Subtopic: ${q.subtopic || "General"} | Result: ${q.status || (q.isCorrect ? "Correct" : "Wrong")} | Question: ${q.questionText || "N/A"}`)
       .join("\n")
     : "No detailed question data available.";
 
@@ -1161,6 +1272,416 @@ function getLetter(index) {
   return letters[index - 1] || null; // returns null if out of range
 }
 
+function renderSubjectStatsTable(records, scoringRules) {
+  const subjectMap = new Map();
+
+  records.forEach((record) => {
+    const subject = record.subject || "General";
+    if (!subjectMap.has(subject)) subjectMap.set(subject, []);
+    subjectMap.get(subject).push(record);
+  });
+
+  const subjectRows = Array.from(subjectMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([subject, subjectRecords]) => {
+      const metrics = calculatePerformanceMetrics(subjectRecords, scoringRules);
+      return `
+        <tr>
+          <td>${escapeHtml(subject)}</td>
+          <td>${metrics.total}</td>
+          <td>${metrics.correct}</td>
+          <td>${metrics.wrong}</td>
+          <td>${metrics.skipped}</td>
+          <td>${formatScoreDisplay(metrics)}</td>
+          <td>${metrics.marks.toFixed(1)}%</td>
+          <td>${escapeHtml(metrics.grade)}</td>
+          <td>${metrics.gradePoint}</td>
+          <td><span class="badge ${metrics.passed ? "bg-success" : "bg-danger"}">${metrics.passed ? "Pass" : "Fail"}</span></td>
+        </tr>
+      `;
+    });
+
+  if (!subjectRows.length) {
+    return `<div class="text-muted small">No subject data available for the current filter.</div>`;
+  }
+
+  return `
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>Questions</th>
+            <th>Correct</th>
+            <th>Wrong</th>
+            <th>Skipped</th>
+            <th>Score</th>
+            <th>Score %</th>
+            <th>Grade</th>
+            <th>Point</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>${subjectRows.join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderQuestionTable(records) {
+  if (!records.length) {
+    return `<div class="text-muted small">No questions available for the current filter.</div>`;
+  }
+
+  const rows = records.map((record) => `
+    <tr>
+      <td>${record.questionNumber}</td>
+      <td class="question-field question-field-subject">${escapeHtml(record.subject || "—")}</td>
+      <td class="question-field question-field-topic">${escapeHtml(record.topic || "—")}</td>
+      <td class="question-field question-field-subtopic">${escapeHtml(record.subtopic || "—")}</td>
+      <td class="question-field question-field-question">${escapeHtml(record.questionText || "—")}</td>
+      <td>${escapeHtml(record.statusLabel || "—")}</td>
+      <td class="question-field question-field-answer">${escapeHtml(record.userAnswerLabel || "—")}</td>
+      <td class="question-field question-field-answer">${escapeHtml(record.correctAnswerLabel || "—")}</td>
+      <td class="question-field question-field-options">${escapeHtml((record.options || []).join(" | ") || "—")}</td>
+      <td class="question-field question-field-explanation">${escapeHtml(record.explanation || "—")}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0" id="questionsTableView">
+        <thead>
+          <tr>
+            <th><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="questionNumber">Q No</button></th>
+            <th class="question-field question-field-subject"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="subject">Subject</button></th>
+            <th class="question-field question-field-topic"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="topic">Topic</button></th>
+            <th class="question-field question-field-subtopic"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="subtopic">Subtopic</button></th>
+            <th class="question-field question-field-question"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="questionText">Question</button></th>
+            <th><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="status">Status</button></th>
+            <th class="question-field question-field-answer"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="userAnswerLabel">Your Answer</button></th>
+            <th class="question-field question-field-answer"><button class="btn btn-link btn-sm p-0 question-sort" type="button" data-sort-key="correctAnswerLabel">Correct Answer</button></th>
+            <th class="question-field question-field-options">Options</th>
+            <th class="question-field question-field-explanation">Explanation</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function initSingleTestInsights() {
+  const toggle = document.getElementById("wrongOnlyToggle");
+  const subjectFilter = document.getElementById("subjectFilter");
+  const topicFilter = document.getElementById("topicFilter");
+  const subtopicFilter = document.getElementById("subtopicFilter");
+  const status = document.getElementById("question-filter-status");
+  const chartTypeSelect = document.getElementById("chartTypeFilter");
+  const chartGroupSelect = document.getElementById("chartGroupFilter");
+  const scoreCorrectInput = document.getElementById("scoreCorrect");
+  const scoreWrongInput = document.getElementById("scoreWrong");
+  const scoreSkippedInput = document.getElementById("scoreSkipped");
+  const resetScoringBtn = document.getElementById("resetScoringBtn");
+  const statsCards = document.getElementById("statsCards");
+  const subjectStatsTable = document.getElementById("subjectStatsTable");
+  const chartCanvas = document.getElementById("performanceBreakdownChart");
+  const questionsCardView = document.getElementById("questionsCardView");
+  const questionsTableView = document.getElementById("questionsTableViewWrap");
+  const questionViewButtons = Array.from(document.querySelectorAll("[data-question-view]"));
+  const fieldToggles = Array.from(document.querySelectorAll(".question-field-toggle"));
+  const questionItems = Array.from(document.querySelectorAll(".question-item"));
+
+  if (
+    !toggle || !status || !subjectFilter || !topicFilter || !subtopicFilter ||
+    !chartTypeSelect || !chartGroupSelect || !scoreCorrectInput || !scoreWrongInput ||
+    !scoreSkippedInput || !statsCards || !subjectStatsTable || !chartCanvas || !questionsCardView || !questionsTableView
+  ) {
+    return;
+  }
+
+  let chart = null;
+  let currentQuestionSort = { key: "questionNumber", direction: "asc" };
+  let currentQuestionView = "card";
+
+  const getFilters = () => ({
+    subjects: getSelectedValues(subjectFilter),
+    topics: getSelectedValues(topicFilter),
+    subtopics: getSelectedValues(subtopicFilter),
+  });
+
+  const updateFilterOptions = (filters) => {
+    const subjectValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "subject").map((record) => record.subject).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const topicValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "topic").map((record) => record.topic).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const subtopicValues = [...new Set(getScopedQuestionRecords(currentTestQuestionsData, filters, "subtopic").map((record) => record.subtopic).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+    updateMultiSelectOptions(subjectFilter, subjectValues, "No matching subjects", filters.subjects);
+    updateMultiSelectOptions(topicFilter, topicValues, "No matching topics", filters.topics);
+    updateMultiSelectOptions(subtopicFilter, subtopicValues, "No matching subtopics", filters.subtopics);
+  };
+
+  const renderStats = (records, scoringRules) => {
+    const overallMetrics = calculatePerformanceMetrics(records, scoringRules);
+    const subjectMetrics = Array.from(
+      records.reduce((map, record) => {
+        const subject = record.subject || "General";
+        if (!map.has(subject)) map.set(subject, []);
+        map.get(subject).push(record);
+        return map;
+      }, new Map()).values()
+    ).map((subjectRecords) => calculatePerformanceMetrics(subjectRecords, scoringRules));
+
+    const cgpa = subjectMetrics.length
+      ? subjectMetrics.reduce((sum, metric) => sum + metric.gradePoint, 0) / subjectMetrics.length
+      : 0;
+    const hasRecords = records.length > 0;
+
+    statsCards.innerHTML = `
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Correct</div>
+            <div class="report-stat-value text-success">${overallMetrics.correct}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Wrong</div>
+            <div class="report-stat-value text-danger">${overallMetrics.wrong}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Skipped</div>
+            <div class="report-stat-value text-warning">${overallMetrics.skipped}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-3">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Total Questions</div>
+            <div class="report-stat-value text-primary">${overallMetrics.total}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-4">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Total Score</div>
+            <div class="report-stat-value">${hasRecords ? formatScoreDisplay(overallMetrics) : "—"}</div>
+            <div class="small text-muted">Recalculated using current scoring inputs</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-4">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Score Percentage</div>
+            <div class="report-stat-value">${hasRecords ? `${overallMetrics.marks.toFixed(1)}%` : "—"}</div>
+            <div class="small text-muted">${hasRecords ? "Based on total score, not question count" : "No questions in current selection"}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6 col-xl-4">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Grade</div>
+            <div class="report-stat-value">${escapeHtml(hasRecords ? overallMetrics.grade : "—")}</div>
+            <div class="small text-muted">${hasRecords ? `Grade point ${overallMetrics.gradePoint}` : "Adjust filters to view grade"}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-12 col-xl-4">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">CGPA</div>
+            <div class="report-stat-value">${hasRecords ? cgpa.toFixed(2) : "—"}</div>
+            <div class="small text-muted">${hasRecords ? "Average grade points across subjects" : "Adjust filters to view CGPA"}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-12 col-xl-4">
+        <div class="card shadow-sm h-100 report-stat-card">
+          <div class="card-body">
+            <div class="text-muted small mb-1">Pass Rule</div>
+            <div class="fw-semibold">${hasRecords ? (subjectMetrics.every((metric) => metric.passed) ? "Pass" : "Fail") : "—"}</div>
+            <div class="small text-muted">${hasRecords ? "Minimum 33% marks required in each subject" : "No subject data in current selection"}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    subjectStatsTable.innerHTML = renderSubjectStatsTable(records, scoringRules);
+  };
+
+  const applyFieldVisibility = () => {
+    const enabledFields = new Set(fieldToggles.filter((toggleEl) => toggleEl.checked).map((toggleEl) => toggleEl.value));
+    getFieldToggleDefinitions().forEach((field) => {
+      const isVisible = enabledFields.has(field.key);
+      document.querySelectorAll(`.question-field-${field.key}`).forEach((element) => {
+        element.classList.toggle("d-none", !isVisible);
+      });
+    });
+  };
+
+  const renderQuestionViews = (records) => {
+    const sortedRecords = [...records].sort((a, b) => {
+      const left = a[currentQuestionSort.key] ?? "";
+      const right = b[currentQuestionSort.key] ?? "";
+      if (typeof left === "number" && typeof right === "number") {
+        return currentQuestionSort.direction === "asc" ? left - right : right - left;
+      }
+      return currentQuestionSort.direction === "asc"
+        ? String(left).localeCompare(String(right))
+        : String(right).localeCompare(String(left));
+    });
+
+    questionItems.forEach((item) => {
+      const questionNumber = Number(item.dataset.questionNumber);
+      const record = sortedRecords.find((entry) => entry.questionNumber === questionNumber);
+      const shouldShow = Boolean(record);
+      item.classList.toggle("d-none", !shouldShow);
+      if (shouldShow) questionsCardView.appendChild(item);
+    });
+
+    questionsTableView.innerHTML = renderQuestionTable(sortedRecords);
+    questionsCardView.classList.toggle("d-none", currentQuestionView !== "card");
+    questionsTableView.classList.toggle("d-none", currentQuestionView !== "table");
+    questionViewButtons.forEach((button) => {
+      const active = button.dataset.questionView === currentQuestionView;
+      button.classList.toggle("btn-dark", active);
+      button.classList.toggle("btn-outline-secondary", !active);
+    });
+    applyFieldVisibility();
+
+    questionsTableView.querySelectorAll(".question-sort").forEach((button) => {
+      button.addEventListener("click", () => {
+        const sortKey = button.dataset.sortKey;
+        currentQuestionSort = {
+          key: sortKey,
+          direction: currentQuestionSort.key === sortKey && currentQuestionSort.direction === "asc" ? "desc" : "asc",
+        };
+        renderQuestionViews(records);
+      });
+    });
+  };
+
+  const renderChart = (records) => {
+    if (typeof Chart === "undefined") return;
+    const groupKey = chartGroupSelect.value || "subject";
+    const chartType = chartTypeSelect.value || "bar";
+    const aggregateMap = new Map();
+
+    records.forEach((record) => {
+      const key = record[groupKey] || "General";
+      if (!aggregateMap.has(key)) {
+        aggregateMap.set(key, { label: key, correct: 0, wrong: 0, skipped: 0 });
+      }
+      const entry = aggregateMap.get(key);
+      if (record.status === "correct") entry.correct += 1;
+      else if (record.status === "skipped") entry.skipped += 1;
+      else entry.wrong += 1;
+    });
+
+    const entries = Array.from(aggregateMap.values())
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .slice(0, 20);
+
+    if (chart) chart.destroy();
+
+    chart = new Chart(chartCanvas.getContext("2d"), {
+      type: chartType,
+      data: {
+        labels: entries.map((entry) => entry.label),
+        datasets: [
+          { label: "Correct", data: entries.map((entry) => entry.correct), backgroundColor: "rgba(22, 163, 74, 0.7)", borderColor: "#16a34a", borderWidth: 1 },
+          { label: "Wrong", data: entries.map((entry) => entry.wrong), backgroundColor: "rgba(220, 38, 38, 0.7)", borderColor: "#dc2626", borderWidth: 1 },
+          { label: "Skipped", data: entries.map((entry) => entry.skipped), backgroundColor: "rgba(245, 158, 11, 0.7)", borderColor: "#f59e0b", borderWidth: 1 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "bottom" } },
+        scales: ["bar", "line"].includes(chartType)
+          ? {
+              x: { stacked: chartType === "bar" },
+              y: { beginAtZero: true, stacked: chartType === "bar", ticks: { precision: 0 } },
+            }
+          : {},
+      },
+    });
+  };
+
+  const updateView = () => {
+    const filters = getFilters();
+    updateFilterOptions(filters);
+    const syncedFilters = getFilters();
+    const scoringRules = {
+      correct: parseScoreInput(scoreCorrectInput.value, DEFAULT_SCORING_RULES.correct),
+      wrong: parseScoreInput(scoreWrongInput.value, DEFAULT_SCORING_RULES.wrong),
+      skipped: parseScoreInput(scoreSkippedInput.value, DEFAULT_SCORING_RULES.skipped),
+    };
+    const visibleRecords = currentTestQuestionsData.filter((record) => (
+      matchesMultiValueFilter(record.subject, syncedFilters.subjects) &&
+      matchesMultiValueFilter(record.topic, syncedFilters.topics) &&
+      matchesMultiValueFilter(record.subtopic, syncedFilters.subtopics)
+    ));
+    const displayedRecords = toggle.checked
+      ? visibleRecords.filter((record) => record.status !== "correct")
+      : visibleRecords;
+
+    const activeFilters = [];
+    if (toggle.checked) activeFilters.push("wrong and skipped only");
+    if (syncedFilters.subjects.length) activeFilters.push(`Subjects: ${syncedFilters.subjects.join(", ")}`);
+    if (syncedFilters.topics.length) activeFilters.push(`Topics: ${syncedFilters.topics.join(", ")}`);
+    if (syncedFilters.subtopics.length) activeFilters.push(`Subtopics: ${syncedFilters.subtopics.join(", ")}`);
+
+    status.textContent = activeFilters.length
+      ? `Showing ${displayedRecords.length} question${displayedRecords.length === 1 ? "" : "s"} for ${activeFilters.join(" | ")}`
+      : `Showing all ${questionItems.length} questions`;
+
+    renderStats(visibleRecords, scoringRules);
+    renderChart(visibleRecords);
+    renderQuestionViews(displayedRecords);
+  };
+
+  [
+    toggle,
+    subjectFilter,
+    topicFilter,
+    subtopicFilter,
+    chartTypeSelect,
+    chartGroupSelect,
+    scoreCorrectInput,
+    scoreWrongInput,
+    scoreSkippedInput,
+  ].forEach((element) => element.addEventListener("change", updateView));
+
+  [scoreCorrectInput, scoreWrongInput, scoreSkippedInput].forEach((element) => element.addEventListener("input", updateView));
+  fieldToggles.forEach((fieldToggle) => fieldToggle.addEventListener("change", applyFieldVisibility));
+  questionViewButtons.forEach((button) => button.addEventListener("click", () => {
+    currentQuestionView = button.dataset.questionView || "card";
+    updateView();
+  }));
+
+  resetScoringBtn.addEventListener("click", () => {
+    scoreCorrectInput.value = DEFAULT_SCORING_RULES.correct;
+    scoreWrongInput.value = DEFAULT_SCORING_RULES.wrong;
+    scoreSkippedInput.value = DEFAULT_SCORING_RULES.skipped;
+    updateView();
+  });
+
+  updateFilterOptions(getFilters());
+  updateView();
+}
+
 function renderSingleTestReport(test, result, student, studentId, testId, questionPaper) {
   console.log("Rendering report with test, result, student, questionPaper:", {
     test,
@@ -1237,10 +1758,26 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
     const subject = normalizeFilterValue(question.Subject || question.section);
     const topic = normalizeFilterValue(question.Topic);
     const subtopic = normalizeFilterValue(question.Subtopic);
+    const isSkipped = !userAnswer || userAnswer === "" || userAnswer === "S";
 
     total += 1;
     const isCorrect = question.isCorrect || userAnswer === "R";
+    const status = getQuestionStatus(userAnswer, isCorrect);
     if (isCorrect) correct += 1;
+
+    const options = [1, 2, 3, 4].map((optionIndex) =>
+      extractOptionText(question[`Option ${optionIndex}`])
+    );
+
+    const correctOption = getCorrectOptionNumber(question);
+    const correctAnswerLabel = correctOption ? `${getLetter(correctOption)}. ${options[correctOption - 1] || ""}`.trim() : "";
+    const userAnswerLabel = isSkipped
+      ? "Skipped"
+      : [1, 2, 3, 4].map((optionNumber) => {
+          const isChosen = userAnswer === getLetter(optionNumber);
+          return isChosen ? `${getLetter(optionNumber)}. ${options[optionNumber - 1] || ""}`.trim() : null;
+        }).find(Boolean) || String(userAnswer || "");
+    const feedbackCorrectAnswer = question.feedbackCorrectAnswer || question.feedback || question.explanation || question.solution;
 
     currentTestQuestionsData.push({
       questionNumber,
@@ -1249,39 +1786,44 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       subtopic,
       questionText: question.Question?.trim() || "",
       isCorrect,
+      status,
+      userAnswer: userAnswer || "",
+      userAnswerLabel,
+      correctAnswerLabel,
+      options: options.filter(Boolean).map((optionText, optionIndex) => `${getLetter(optionIndex + 1)}. ${optionText}`),
+      explanation: feedbackCorrectAnswer || "",
+      statusLabel: status === "correct" ? "Correct" : status === "skipped" ? "Skipped" : "Wrong",
     });
-
-    const options = [1, 2, 3, 4].map((optionIndex) =>
-      extractOptionText(question[`Option ${optionIndex}`])
-    );
-
-    const correctOption = getCorrectOptionNumber(question);
 
     questionsHtml += `
       <div class="question-item"
+           data-question-number="${questionNumber}"
            data-is-correct="${isCorrect ? "true" : "false"}"
+           data-status="${status}"
            data-subject="${escapeHtml(subject)}"
            data-topic="${escapeHtml(topic)}"
            data-subtopic="${escapeHtml(subtopic)}">
         <div class="d-flex justify-content-between mb-3">
           <h6 class="fw-bold">Question ${questionNumber}</h6>
-          <span class="badge ${isCorrect ? "bg-success" : "bg-danger"}">
-            ${isCorrect ? "Correct" : "Wrong"}
+          <span class="badge ${status === "correct" ? "bg-success" : status === "skipped" ? "bg-warning text-dark" : "bg-danger"}">
+            ${status === "correct" ? "Correct" : status === "skipped" ? "Skipped" : "Wrong"}
           </span>
         </div>
         ${(subject || topic || subtopic) ? `
           <div class="d-flex flex-wrap gap-2 mb-3">
-            ${subject ? `<span class="badge bg-light text-dark border">Subject: ${escapeHtml(subject)}</span>` : ""}
-            ${topic ? `<span class="badge bg-light text-dark border">Topic: ${escapeHtml(topic)}</span>` : ""}
-            ${subtopic ? `<span class="badge bg-light text-dark border">Subtopic: ${escapeHtml(subtopic)}</span>` : ""}
+            ${subject ? `<span class="badge bg-light text-dark border question-field question-field-subject">Subject: ${escapeHtml(subject)}</span>` : ""}
+            ${topic ? `<span class="badge bg-light text-dark border question-field question-field-topic">Topic: ${escapeHtml(topic)}</span>` : ""}
+            ${subtopic ? `<span class="badge bg-light text-dark border question-field question-field-subtopic">Subtopic: ${escapeHtml(subtopic)}</span>` : ""}
           </div>
         ` : ""}
         ${question.Question?.trim()
-        ? `<p class="mb-3">${escapeHtml(question.Question)}</p>`
+        ? `<p class="mb-3 question-field question-field-question">${escapeHtml(question.Question)}</p>`
         : ""}
+        <div class="question-field question-field-answer small text-muted mb-3">
+          <div><strong>Your Answer:</strong> ${escapeHtml(userAnswerLabel || "—")}</div>
+          <div><strong>Correct Answer:</strong> ${escapeHtml(correctAnswerLabel || "—")}</div>
+        </div>
     `;
-
-    const isSkipped = !userAnswer || userAnswer === "" || userAnswer === "S";
 
     options.forEach((opt, optionIndex) => {
       if (!opt) return;
@@ -1303,7 +1845,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       else if (isSkipped && !isCorrectOption) indicator = " <strong class='hidden'>S</strong>";
 
       questionsHtml += `
-        <div class="option-box ${className}">
+        <div class="option-box ${className} question-field question-field-options">
           <strong>${optionLetter}.</strong>
           ${escapeHtml(opt)}
           ${indicator}
@@ -1311,12 +1853,10 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       `;
     });
 
-    const feedbackCorrectAnswer = question.feedbackCorrectAnswer || question.feedback || question.explanation || question.solution;
-
     if (feedbackCorrectAnswer) {
       const feedbackId = `feedback-${questionNumber}`;
       questionsHtml += `
-        <div class="feedback-section mt-3">
+        <div class="feedback-section mt-3 question-field question-field-explanation">
           <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#${feedbackId}" aria-expanded="false" aria-controls="${feedbackId}">
             <i class="bi bi-chevron-down me-1"></i> View Explanation
           </button>
@@ -1335,9 +1875,6 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
 
   const scorePercent = total > 0 ? Math.round((correct / total) * 100) : 0;
   const scoreBadgeClass = scorePercent >= 70 ? "bg-success" : "bg-danger";
-  const subjectOptions = buildFilterOptions(questions, "Subject");
-  const topicOptions = buildFilterOptions(questions, "Topic");
-  const subtopicOptions = buildFilterOptions(questions, "Subtopic");
   currentSingleTestAIContext = buildSingleTestAIContext({
     test,
     student,
@@ -1359,18 +1896,107 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
           <div class="col-md-6">
             <h5 class="fw-bold mb-3">Test Information</h5>
             <p><strong>Test:</strong> ${escapeHtml(test.testName || "N/A")}</p>
+            <p><strong>Total Questions:</strong> ${total}</p>
             <p>
-              <strong>Score:</strong>
+              <strong>Accuracy:</strong>
               <span class="badge ${scoreBadgeClass} fs-6">
-                ${correct}/${total} (${scorePercent}%)
+                ${correct}/${total} correct (${scorePercent}%)
               </span>
             </p>
+            <p class="small text-muted mb-0">Score cards below separately show recalculated score and score percentage.</p>
             <p class="hidden mt-2 mb-0">
               <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
                  href="report.html?testId=${encodeURIComponent(testId)}&studentId=${encodeURIComponent(studentId)}" target="_blank">
                 Open Link
               </a>
             </p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card shadow-sm mb-4">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 mb-3">
+          <div>
+            <h5 class="fw-bold mb-1">Performance Dashboard</h5>
+            <p class="text-muted small mb-0">Use multi-select filters, switch chart type, and recalculate marks with your own scoring rules.</p>
+          </div>
+          <div class="small text-muted">Default scoring: +3 correct, -1 wrong, 0 skipped</div>
+        </div>
+        <div class="row g-3 mb-3 no-print">
+          <div class="col-md-4">
+            <label class="form-label small text-muted mb-1" for="subjectFilter">Subjects</label>
+            <select class="form-select report-multiselect" id="subjectFilter" multiple size="5"></select>
+            <div class="form-text">Select one or more subjects.</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small text-muted mb-1" for="topicFilter">Topics</label>
+            <select class="form-select report-multiselect" id="topicFilter" multiple size="5"></select>
+            <div class="form-text">Options adjust to your current subject selection.</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small text-muted mb-1" for="subtopicFilter">Subtopics</label>
+            <select class="form-select report-multiselect" id="subtopicFilter" multiple size="5"></select>
+            <div class="form-text">Use Ctrl/Cmd-click to pick multiple values.</div>
+          </div>
+        </div>
+        <div class="row g-3 align-items-end mb-3 no-print">
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1" for="chartTypeFilter">Chart Type</label>
+            <select class="form-select" id="chartTypeFilter">
+              <option value="bar">Stacked Bar</option>
+              <option value="line">Line</option>
+              <option value="radar">Radar</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1" for="chartGroupFilter">Chart Grouping</label>
+            <select class="form-select" id="chartGroupFilter">
+              <option value="subject">Subject Wise</option>
+              <option value="topic">Topic Wise</option>
+              <option value="subtopic">Subtopic Wise</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1" for="scoreCorrect">Correct</label>
+            <input class="form-control" id="scoreCorrect" type="number" step="0.5" value="${DEFAULT_SCORING_RULES.correct}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1" for="scoreWrong">Wrong</label>
+            <input class="form-control" id="scoreWrong" type="number" step="0.5" value="${DEFAULT_SCORING_RULES.wrong}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-muted mb-1" for="scoreSkipped">Skipped</label>
+            <input class="form-control" id="scoreSkipped" type="number" step="0.5" value="${DEFAULT_SCORING_RULES.skipped}">
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-3 no-print">
+          <button id="resetScoringBtn" class="btn btn-sm btn-outline-secondary">Reset Scoring</button>
+          <div class="form-check form-switch d-flex align-items-center mb-0">
+            <input class="form-check-input" type="checkbox" id="wrongOnlyToggle">
+            <label class="form-check-label ms-2" for="wrongOnlyToggle">Show only wrong and skipped</label>
+          </div>
+        </div>
+        <div id="question-filter-status" class="text-muted small mb-3"></div>
+        <div class="row g-3 mb-4" id="statsCards"></div>
+        <div class="card bg-light border-0 mb-4">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h6 class="fw-bold mb-0">Interactive Chart</h6>
+              <span class="text-muted small">Counts update with the current filters.</span>
+            </div>
+            <div class="report-chart-wrap">
+              <canvas id="performanceBreakdownChart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="card bg-light border-0">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h6 class="fw-bold mb-0">Per Subject Stats</h6>
+              <span class="text-muted small">Grade points are used for CGPA. Passing requires 33% in each subject.</span>
+            </div>
+            <div id="subjectStatsTable"></div>
           </div>
         </div>
       </div>
@@ -1384,44 +2010,41 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
         <button id="exportCSVSummary" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
           <i class="bi bi-download"></i> Export Summary CSV
         </button>
-        <div class="form-check form-switch ms-2 d-flex align-items-center">
-          <input class="form-check-input" type="checkbox" id="wrongOnlyToggle">
-          <label class="form-check-label ms-2" for="wrongOnlyToggle">Show only wrong</label>
+      </div>
+    </div>
+    <div class="card shadow-sm mb-4 no-print">
+      <div class="card-body">
+        <div class="row g-3 align-items-start">
+          <div class="col-lg-4">
+            <label class="form-label small text-muted mb-2 d-block">Question View</label>
+            <div class="btn-group" role="group" aria-label="Question view">
+              <button type="button" class="btn btn-dark btn-sm" data-question-view="card">Card</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-question-view="table">Table</button>
+            </div>
+          </div>
+          <div class="col-lg-8">
+            <label class="form-label small text-muted mb-2 d-block">Show Fields</label>
+            <div class="d-flex flex-wrap gap-3">
+              ${getFieldToggleDefinitions().map((field) => `
+                <div class="form-check">
+                  <input class="form-check-input question-field-toggle" type="checkbox" value="${field.key}" id="fieldToggle${field.key}" checked>
+                  <label class="form-check-label small" for="fieldToggle${field.key}">${escapeHtml(field.label)}</label>
+                </div>
+              `).join("")}
+            </div>
+          </div>
         </div>
       </div>
     </div>
-    <div class="row g-2 mb-3 no-print">
-      <div class="col-md-4">
-        <label class="form-label small text-muted mb-1" for="subjectFilter">Subject</label>
-        <select class="form-select" id="subjectFilter">
-          <option value="">All subjects</option>
-          ${subjectOptions}
-        </select>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label small text-muted mb-1" for="topicFilter">Topic</label>
-        <select class="form-select" id="topicFilter">
-          <option value="">All topics</option>
-          ${topicOptions}
-        </select>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label small text-muted mb-1" for="subtopicFilter">Subtopic</label>
-        <select class="form-select" id="subtopicFilter">
-          <option value="">All subtopics</option>
-          ${subtopicOptions}
-        </select>
-      </div>
-    </div>
-    <div id="question-filter-status" class="text-muted small mb-3"></div>
     <div class="alert alert-warning small mb-3 d-flex align-items-center" role="alert">
       <i class="bi bi-exclamation-triangle-fill me-2"></i>
       <span><strong>AI-Generated Content:</strong> AI can make mistakes. Always verify important information like question papers and chat responses.</span>
     </div>
-    ${questionsHtml}
+    <div id="questionsCardView">${questionsHtml}</div>
+    <div id="questionsTableViewWrap" class="d-none"></div>
   `);
 
-  initWrongQuestionFilter();
+  initSingleTestInsights();
   initSingleTestCSVExport(test.testName, student.name);
   initSingleTestAIChat();
   renderMathInReport();
@@ -1439,51 +2062,6 @@ function renderMathInReport() {
   }
 }
 
-function initWrongQuestionFilter() {
-  const toggle = document.getElementById("wrongOnlyToggle");
-  const subjectFilter = document.getElementById("subjectFilter");
-  const topicFilter = document.getElementById("topicFilter");
-  const subtopicFilter = document.getElementById("subtopicFilter");
-  const status = document.getElementById("question-filter-status");
-  const questionItems = Array.from(document.querySelectorAll(".question-item"));
-  if (!toggle || !status || !subjectFilter || !topicFilter || !subtopicFilter || questionItems.length === 0) return;
-
-  const updateFilter = () => {
-    const wrongOnly = toggle.checked;
-    const subject = subjectFilter.value;
-    const topic = topicFilter.value;
-    const subtopic = subtopicFilter.value;
-    let visibleCount = 0;
-
-    questionItems.forEach((item) => {
-      const isCorrect = item.dataset.isCorrect === "true";
-      const matchesWrong = !wrongOnly || !isCorrect;
-      const matchesSubject = !subject || item.dataset.subject === subject;
-      const matchesTopic = !topic || item.dataset.topic === topic;
-      const matchesSubtopic = !subtopic || item.dataset.subtopic === subtopic;
-      const shouldShow = matchesWrong && matchesSubject && matchesTopic && matchesSubtopic;
-      item.classList.toggle("d-none", !shouldShow);
-      if (shouldShow) visibleCount += 1;
-    });
-
-    const activeFilters = [];
-    if (wrongOnly) activeFilters.push("wrong only");
-    if (subject) activeFilters.push(`Subject: ${subject}`);
-    if (topic) activeFilters.push(`Topic: ${topic}`);
-    if (subtopic) activeFilters.push(`Subtopic: ${subtopic}`);
-
-    status.textContent = activeFilters.length > 0
-      ? `Showing ${visibleCount} question${visibleCount === 1 ? "" : "s"} for ${activeFilters.join(", ")}`
-      : `Showing all ${questionItems.length} questions`;
-  };
-
-  toggle.addEventListener("change", updateFilter);
-  subjectFilter.addEventListener("change", updateFilter);
-  topicFilter.addEventListener("change", updateFilter);
-  subtopicFilter.addEventListener("change", updateFilter);
-  updateFilter();
-}
-
 function initSingleTestCSVExport(testName, studentName) {
   const detailBtn = document.getElementById("exportCSVDetail");
   const summaryBtn = document.getElementById("exportCSVSummary");
@@ -1494,13 +2072,13 @@ function initSingleTestCSVExport(testName, studentName) {
 
   detailBtn.addEventListener("click", () => {
     const rows = [
-      ["Subject", "Topic", "Subtopic", "Question", "Correct/Wrong"],
+      ["Subject", "Topic", "Subtopic", "Question", "Status"],
       ...currentTestQuestionsData.map(q => [
         q.subject,
         q.topic,
         q.subtopic,
         q.questionText,
-        q.isCorrect ? "Correct" : "Wrong"
+        q.status
       ])
     ];
     downloadCSV(`${safeTestName}_${safeStudentName}_Detail.csv`, rows);
@@ -1508,8 +2086,8 @@ function initSingleTestCSVExport(testName, studentName) {
 
   summaryBtn.addEventListener("click", () => {
     const rows = [
-      ["Subject", "Topic", "Num_Correct", "Num_Wrong"],
-      ...buildCurrentTestSummaryData().map((s) => [s.subject, s.topic, s.correct, s.wrong]),
+      ["Subject", "Topic", "Num_Correct", "Num_Wrong", "Num_Skipped", "Questions"],
+      ...buildCurrentTestSummaryData().map((s) => [s.subject, s.topic, s.correct, s.wrong, s.skipped, s.total]),
     ];
     downloadCSV(`${safeTestName}_${safeStudentName}_Summary.csv`, rows);
   });
