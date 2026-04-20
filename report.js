@@ -882,6 +882,48 @@ class ReportAIChatPanel {
     ].join("\n");
   }
 
+  formatAIError(error, contextLabel = "request") {
+    const rawMessage = String(error?.message || error || "Unknown error");
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(rawMessage);
+    } catch (parseError) {
+      const jsonMatch = rawMessage.match(/\{[\s\S]*\}$/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (_ignored) {
+          parsed = null;
+        }
+      }
+    }
+
+    const apiError = parsed?.error || null;
+    const status = String(apiError?.status || "").toUpperCase();
+    const code = apiError?.code;
+    const providerLabel = this.provider === "gemini" ? "Google Gemini" : "AI";
+    const detailedMessage = apiError?.message || rawMessage;
+
+    if (status === "UNAVAILABLE" || code === 503) {
+      return `${providerLabel} is currently experiencing high demand. Please wait a little and try again.\n\nDetails: ${detailedMessage}`;
+    }
+
+    if (status === "RESOURCE_EXHAUSTED" || code === 429) {
+      return `${providerLabel} quota or rate limit was exceeded for this ${contextLabel}. Please check your Gemini plan/quota, wait a bit, or switch to WebLLM.\n\nDetails: ${detailedMessage}`;
+    }
+
+    if (status === "PERMISSION_DENIED" || status === "UNAUTHENTICATED" || code === 401 || code === 403) {
+      return `${providerLabel} rejected the API key. Please open the Gemini key section, verify the key, save it again, and reconnect.\n\nDetails: ${detailedMessage}`;
+    }
+
+    if (rawMessage.includes("Gemini API key missing")) {
+      return "Gemini API key is missing. Open the Gemini key section, paste your API key, save it, and click Connect.";
+    }
+
+    return `${providerLabel} ${contextLabel} failed. Please try again.${detailedMessage ? `\n\nDetails: ${detailedMessage}` : ""}`;
+  }
+
   async initializeWebLLM(context) {
     if (!navigator.gpu) {
       this.showError("WebGPU is not supported in this browser. Please use a recent Chrome or Edge build.");
@@ -968,7 +1010,7 @@ class ReportAIChatPanel {
       console.error("Failed to load AI provider:", error);
       this.progressContainer.classList.remove("active");
       this.updateStatus("error", "Failed to load AI");
-      this.addMessage("ai", `Error loading ${provider === "gemini" ? "Gemini" : "model"}: ${error.message || "Unknown error"}`);
+      this.addMessage("ai", this.formatAIError(error, provider === "gemini" ? "connection" : "model load"));
     } finally {
       this.loadBtn.disabled = false;
       this.modelSelect.disabled = false;
@@ -1232,7 +1274,7 @@ class ReportAIChatPanel {
     } catch (error) {
       console.error("AI response error:", error);
       this.hideTyping();
-      this.addMessage("ai", "Sorry, I hit an error while generating the response. Please try again.");
+      this.addMessage("ai", this.formatAIError(error, "response"));
     } finally {
       this.isLoading = false;
       this.sendBtn.disabled = false;
@@ -1330,7 +1372,7 @@ class ReportAIChatPanel {
       this.renderQuizQuestions();
     } catch (error) {
       console.error("Quiz generation error:", error);
-      this.addMessage("ai", "Sorry, I couldn't generate quiz questions right now. Please try again.");
+      this.addMessage("ai", this.formatAIError(error, "quiz generation"));
     } finally {
       this.quizGenerateBtn.disabled = false;
       this.quizGenerateBtn.innerHTML = '<i class="fas fa-magic"></i> Generate Quiz Questions';
@@ -1421,7 +1463,7 @@ class ReportAIChatPanel {
       this.addMessage("ai", feedback);
     } catch (error) {
       console.error("Quiz evaluation error:", error);
-      this.addMessage("ai", "I couldn't evaluate that answer right now. Please try again.");
+      this.addMessage("ai", this.formatAIError(error, "quiz evaluation"));
     }
 
     return true;
