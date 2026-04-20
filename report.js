@@ -576,7 +576,7 @@ function updateMultiSelectOptions(select, values, placeholder, selectedValues) {
 }
 
 function getGradeDetails(marks) {
-  const normalizedMarks = Math.max(0, Math.min(100, Number(marks) || 0));
+  const normalizedMarks = Math.round(Math.max(0, Math.min(100, Number(marks) || 0)));
   return GRADE_SCALE.find((entry) => normalizedMarks >= entry.min && normalizedMarks <= entry.max) || GRADE_SCALE[GRADE_SCALE.length - 1];
 }
 
