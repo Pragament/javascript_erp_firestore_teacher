@@ -186,24 +186,36 @@ async function loadTests() {
         const snapshot = await firestore.collection('tests')
             .where('sectionId', '==', currentSectionId)
             .get();
-        
+
         if (snapshot.empty) {
             elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">No tests found for your section</div>';
             return;
         }
 
+        // Sort tests by date descending (most recent first)
+        const sortedDocs = snapshot.docs.slice().sort((a, b) => {
+            const dateA = a.data().testDate?.toDate?.() || new Date(a.data().testDate || 0);
+            const dateB = b.data().testDate?.toDate?.() || new Date(b.data().testDate || 0);
+            return dateB - dateA;
+        });
+
         let html = '<div class="p-3">';
-        
-        for (const doc of snapshot.docs) {
+
+        for (const doc of sortedDocs) {
             const test = doc.data();
             const resultCount = await getResultCount(doc.id);
-            
+
+            // Format test date
+            const testDateObj = test.testDate?.toDate?.() || new Date(test.testDate || null);
+            const dateStr = testDateObj && !isNaN(testDateObj) ? testDateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'No date';
+
             html += `
                 <div class="test-card">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <h5 class="fw-bold">${test.testName || 'Test'}</h5>
                         <span class="badge" style="background:#16a085;color:white">${resultCount} Results</span>
                     </div>
+                    <p class="text-muted mb-1"><i class="bi bi-calendar me-1"></i>${dateStr}</p>
                     <p class="text-muted mb-3">${test.description || 'No description'}</p>
                     <a class="btn" style="background:#16a085;color:white;border:none"
                        href="${getTestResultsPageUrl(doc.id)}"
