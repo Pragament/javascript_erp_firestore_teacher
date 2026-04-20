@@ -550,9 +550,15 @@
                         <li>Use quiz mode to generate practice questions from weak topics.</li>
                     </ul>
                     <div class="ai-sample-prompts">
-                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Create markdown study material for my weakest topics with short explanations, examples, and a revision checklist." disabled>Weak-topic notes</button>
-                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Generate 5 practice quiz questions based on the topics where I made the most mistakes. Show answers too." disabled>Practice quiz</button>
-                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Summarize this report in markdown with strengths, weak areas, and what to study next." disabled>Report summary</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Create markdown study material for my weakest topics with short explanations, examples, and a revision checklist.">Weak-topic notes</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Generate 5 practice quiz questions based on the topics where I made the most mistakes. Show answers too.">Practice quiz</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="Summarize this report in markdown with strengths, weak areas, and what to study next.">Report summary</button>
+                    </div>
+                    <hr style="margin: 12px 0; border-color: #444;">
+                    <div class="ai-sample-prompts">
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="I have a CSV of student test results with columns: Test, Student, Question_No, Question, Your_Answer, Correct_Answer, Time_Taken, Status.\n\nAnalyze this data and:\n1. Identify the top 3 weakest topics based on incorrect answers\n2. List specific question numbers where the student struggled most\n3. Calculate average time spent per question\n4. Suggest 5 targeted study areas\n\nPaste CSV content below.">Analyze Detail CSV</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="I have a CSV summary with columns: Subject, Topic, Num_Correct, Num_Wrong, Num_Skipped, Questions.\n\nAnalyze this data and:\n1. Rank topics by accuracy percentage (correct/total)\n2. Highlight topics with >50% error rate\n3. Recommend priority topics for revision\n4. Calculate overall subject-wise performance\n\nPaste CSV content below.">Analyze Summary CSV</button>
+                        <button class="ai-chat-quick-btn ai-sample-btn" data-prompt="I have a CSV progress report with columns: Date, Subject, Topic, Num_Correct, Num_Wrong.\n\nAnalyze this data and:\n1. Show learning trends over time per subject\n2. Identify topics showing improvement vs decline\n3. Calculate weekly/monthly accuracy rates\n4. Predict which topics need immediate attention\n\nPaste CSV content below.">Analyze Progress CSV</button>
                     </div>
                 </div>
             </div>

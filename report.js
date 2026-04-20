@@ -749,7 +749,6 @@ class ReportAIChatPanel {
     if (this.quizGenerateBtn) this.quizGenerateBtn.disabled = true;
     if (this.quickActions) this.quickActions.style.display = "none";
     if (this.chatInputArea) this.chatInputArea.style.display = "none";
-    document.querySelectorAll(".ai-sample-btn").forEach((btn) => { btn.disabled = true; });
   }
 
   enableInteractions() {
@@ -758,7 +757,6 @@ class ReportAIChatPanel {
     if (this.quizGenerateBtn) this.quizGenerateBtn.disabled = false;
     if (this.quickActions) this.quickActions.style.display = "flex";
     if (this.chatInputArea) this.chatInputArea.style.display = "block";
-    document.querySelectorAll(".ai-sample-btn").forEach((btn) => { btn.disabled = false; });
   }
 
   buildSystemPrompt(context) {
@@ -1003,11 +1001,15 @@ class ReportAIChatPanel {
   }
 
   useSamplePrompt(prompt) {
+    if (!prompt) return;
     if (!this.isReady) {
-      this.addMessage("ai", "Load a model first so I can use the current report.");
+      navigator.clipboard.writeText(prompt).then(() => {
+        this.addMessage("ai", "Prompt copied to clipboard! You can paste it into any AI service. Load a model to chat here directly.");
+      }).catch(() => {
+        this.addMessage("ai", `Copy this prompt to use elsewhere:\n\n${prompt}\n\nLoad a model to chat here directly.`);
+      });
       return;
     }
-    if (!prompt) return;
     this.addMessage("user", prompt);
     this.generateResponse(`${prompt}\n\nUse this report context:\n${this.getCurrentReportContext().contextText.substring(0, 12000)}`);
   }
