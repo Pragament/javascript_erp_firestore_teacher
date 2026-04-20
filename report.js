@@ -630,10 +630,12 @@ function buildSingleTestAIContext({ test, student, correct, total, scorePercent 
 class ReportAIChatPanel {
   constructor() {
     this.engine = null;
+    this.provider = "webllm";
     this.messages = [];
     this.isLoading = false;
     this.isReady = false;
     this.modelCacheStatus = {};
+    this.geminiStorageKey = "report_ai_gemini_api_key";
     this.currentQuizQuestions = [];
     this.activeQuizQuestion = null;
     this.activeQuizIndex = null;
@@ -651,6 +653,13 @@ class ReportAIChatPanel {
     this.modelSelect = document.getElementById("aiModelSelect");
     this.loadBtn = document.getElementById("aiLoadModel");
     this.deleteBtn = document.getElementById("aiDeleteModel");
+    this.providerPanel = document.getElementById("aiProviderPanel");
+    this.geminiApiKeyInput = document.getElementById("aiGeminiApiKey");
+    this.geminiKeyStatus = document.getElementById("aiGeminiKeyStatus");
+    this.geminiInstructionsBtn = document.getElementById("aiGeminiInstructionsBtn");
+    this.geminiInstructions = document.getElementById("aiGeminiInstructions");
+    this.geminiSaveKeyBtn = document.getElementById("aiGeminiSaveKeyBtn");
+    this.geminiClearKeyBtn = document.getElementById("aiGeminiClearKeyBtn");
     this.progressContainer = document.getElementById("aiProgressContainer");
     this.progressFill = document.getElementById("aiProgressFill");
     this.progressText = document.getElementById("aiProgressText");
@@ -664,6 +673,8 @@ class ReportAIChatPanel {
     this.chatInputArea = document.getElementById("aiChatInputArea");
 
     this.bindEvents();
+    this.restoreGeminiApiKey();
+    this.updateProviderUI();
     this.checkModelCacheStatus();
     this.refreshContextState();
   }
@@ -685,7 +696,15 @@ class ReportAIChatPanel {
     });
     if (this.loadBtn) this.loadBtn.addEventListener("click", () => this.loadModel());
     if (this.deleteBtn) this.deleteBtn.addEventListener("click", () => this.deleteModel());
-    if (this.modelSelect) this.modelSelect.addEventListener("change", () => this.updateDeleteButtonVisibility());
+    if (this.modelSelect) this.modelSelect.addEventListener("change", () => {
+      this.updateProviderUI();
+      this.updateDeleteButtonVisibility();
+    });
+    if (this.geminiInstructionsBtn) this.geminiInstructionsBtn.addEventListener("click", () => {
+      this.geminiInstructions?.classList.toggle("open");
+    });
+    if (this.geminiSaveKeyBtn) this.geminiSaveKeyBtn.addEventListener("click", () => this.saveGeminiApiKey());
+    if (this.geminiClearKeyBtn) this.geminiClearKeyBtn.addEventListener("click", () => this.clearGeminiApiKey());
     if (this.sendBtn) this.sendBtn.addEventListener("click", () => this.sendMessage());
     if (this.inputEl) {
       this.inputEl.addEventListener("keydown", (e) => {
@@ -720,6 +739,86 @@ class ReportAIChatPanel {
     return currentSingleTestAIContext;
   }
 
+  getSelectedProvider() {
+    const selectedOption = this.modelSelect?.selectedOptions?.[0];
+    return selectedOption?.dataset?.provider || "webllm";
+  }
+
+  getSelectedModelId() {
+    return this.modelSelect?.value || "";
+  }
+
+  getSavedGeminiApiKey() {
+    try {
+      return window.localStorage.getItem(this.geminiStorageKey) || "";
+    } catch (error) {
+      console.error("Failed to read Gemini API key from localStorage:", error);
+      return "";
+    }
+  }
+
+  restoreGeminiApiKey() {
+    const apiKey = this.getSavedGeminiApiKey();
+    if (this.geminiApiKeyInput) this.geminiApiKeyInput.value = apiKey;
+    this.updateGeminiKeyStatus(apiKey ? "Saved Gemini API key found in this browser." : "No saved Gemini API key found.");
+  }
+
+  saveGeminiApiKey() {
+    const apiKey = this.geminiApiKeyInput?.value?.trim() || "";
+    if (!apiKey) {
+      this.updateGeminiKeyStatus("Enter an API key before saving.");
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(this.geminiStorageKey, apiKey);
+      this.updateGeminiKeyStatus("Gemini API key saved locally in this browser.");
+      this.addMessage("ai", "Gemini API key saved in local storage. You won't need to re-enter it after a page reload.");
+    } catch (error) {
+      console.error("Failed to save Gemini API key:", error);
+      this.updateGeminiKeyStatus("Unable to save the API key in local storage.");
+    }
+  }
+
+  clearGeminiApiKey() {
+    try {
+      window.localStorage.removeItem(this.geminiStorageKey);
+      if (this.geminiApiKeyInput) this.geminiApiKeyInput.value = "";
+      this.updateGeminiKeyStatus("Saved Gemini API key cleared.");
+      if (this.provider === "gemini") {
+        this.isReady = false;
+        this.disableInteractions();
+        this.updateStatus("ready", "Gemini key cleared. Add a key and connect again to continue.");
+      }
+    } catch (error) {
+      console.error("Failed to clear Gemini API key:", error);
+      this.updateGeminiKeyStatus("Unable to clear the saved API key.");
+    }
+  }
+
+  updateGeminiKeyStatus(message) {
+    if (this.geminiKeyStatus) this.geminiKeyStatus.textContent = message;
+  }
+
+  updateProviderUI() {
+    const provider = this.getSelectedProvider();
+    const isGemini = provider === "gemini";
+    this.provider = provider;
+
+    if (this.providerPanel) this.providerPanel.style.display = isGemini ? "block" : "none";
+    if (this.loadBtn) {
+      this.loadBtn.innerHTML = isGemini
+        ? '<i class="fas fa-bolt"></i> Connect'
+        : '<i class="fas fa-download"></i> Load';
+    }
+    if (isGemini) {
+      const hasKey = Boolean((this.geminiApiKeyInput?.value || this.getSavedGeminiApiKey()).trim());
+      this.updateGeminiKeyStatus(hasKey ? "Saved Gemini API key available." : "No saved Gemini API key found.");
+    } else if (!this.isReady && this.getSavedGeminiApiKey()) {
+      this.updateStatus("ready", "Saved Gemini API key detected. Switch to Gemini and click Connect.");
+    }
+  }
+
   refreshContextState() {
     const context = this.getCurrentReportContext();
     if (!context) {
@@ -727,7 +826,7 @@ class ReportAIChatPanel {
       this.disableInteractions();
       this.messagesEl.innerHTML = `
         <div class="ai-chat-message ai">
-          <div class="message-bubble markdown-content">This AI panel is ready for single test reports. Open a report with both \`testId\` and \`studentId\`, then load a model.</div>
+          <div class="message-bubble markdown-content">This AI panel is ready for single test reports. Open a report with both \`testId\` and \`studentId\`, then load WebLLM or Gemini.</div>
           <span class="message-time">Just now</span>
         </div>
       `;
@@ -735,7 +834,13 @@ class ReportAIChatPanel {
     }
 
     if (!this.isReady) {
-      this.updateStatus("ready", `Report ready: ${context.studentName} scored ${context.scorePercent}%`);
+      const savedGeminiKey = this.getSavedGeminiApiKey();
+      this.updateStatus(
+        "ready",
+        savedGeminiKey
+          ? `Report ready: ${context.studentName} scored ${context.scorePercent}%. Saved Gemini API key detected.`
+          : `Report ready: ${context.studentName} scored ${context.scorePercent}%`
+      );
     }
 
     if (this.messages.length === 0) {
@@ -772,6 +877,59 @@ class ReportAIChatPanel {
     ].join("\n");
   }
 
+  async initializeWebLLM(context) {
+    if (!navigator.gpu) {
+      this.showError("WebGPU is not supported in this browser. Please use a recent Chrome or Edge build.");
+      this.updateStatus("error", "WebGPU not supported");
+      return false;
+    }
+
+    if (typeof window.CreateMLCEngine === "undefined") {
+      this.showError("WebLLM library is not available. Please check your internet connection and refresh.");
+      this.updateStatus("error", "WebLLM unavailable");
+      return false;
+    }
+
+    const modelId = this.getSelectedModelId();
+    this.addMessage("ai", `Loading ${modelId}. First-time setup can take a few minutes.`);
+
+    this.engine = await window.CreateMLCEngine(modelId, {
+      initProgressCallback: (progress) => {
+        const percent = Math.round((progress.progress || 0) * 100);
+        this.progressFill.style.width = `${percent}%`;
+        this.progressText.textContent = `${percent}%`;
+        this.updateStatus("loading", `Loading model... ${percent}%`);
+      },
+    });
+
+    this.provider = "webllm";
+    this.messages = [{
+      role: "system",
+      content: this.buildSystemPrompt(context),
+    }];
+    this.checkModelCacheStatus();
+    return true;
+  }
+
+  async initializeGemini(context) {
+    const apiKey = (this.geminiApiKeyInput?.value || this.getSavedGeminiApiKey()).trim();
+    if (!apiKey) {
+      this.updateStatus("error", "Gemini API key required");
+      this.showError("Add your Gemini API key, save it, and then click Connect.");
+      return false;
+    }
+
+    this.provider = "gemini";
+    this.engine = null;
+    this.messages = [{
+      role: "system",
+      content: this.buildSystemPrompt(context),
+    }];
+    this.updateGeminiKeyStatus("Saved Gemini API key available.");
+    this.addMessage("ai", `Gemini ${this.getSelectedModelId()} connected. Your API key is stored only in this browser's local storage.`);
+    return true;
+  }
+
   async loadModel() {
     const context = this.getCurrentReportContext();
     if (!context) {
@@ -779,51 +937,33 @@ class ReportAIChatPanel {
       return;
     }
 
-    if (!navigator.gpu) {
-      this.showError("WebGPU is not supported in this browser. Please use a recent Chrome or Edge build.");
-      this.updateStatus("error", "WebGPU not supported");
-      return;
-    }
-
-    if (typeof window.CreateMLCEngine === "undefined") {
-      this.showError("WebLLM library is not available. Please check your internet connection and refresh.");
-      this.updateStatus("error", "WebLLM unavailable");
-      return;
-    }
-
-    const modelId = this.modelSelect.value;
+    const provider = this.getSelectedProvider();
     this.loadBtn.disabled = true;
     this.modelSelect.disabled = true;
-    this.progressContainer.classList.add("active");
-    this.progressFill.style.width = "0%";
-    this.progressText.textContent = "0%";
-    this.addMessage("ai", `Loading ${modelId}. First-time setup can take a few minutes.`);
+    if (provider === "webllm") {
+      this.progressContainer.classList.add("active");
+      this.progressFill.style.width = "0%";
+      this.progressText.textContent = "0%";
+    }
 
     try {
-      this.engine = await window.CreateMLCEngine(modelId, {
-        initProgressCallback: (progress) => {
-          const percent = Math.round((progress.progress || 0) * 100);
-          this.progressFill.style.width = `${percent}%`;
-          this.progressText.textContent = `${percent}%`;
-          this.updateStatus("loading", `Loading model... ${percent}%`);
-        },
-      });
+      const didLoad = provider === "gemini"
+        ? await this.initializeGemini(context)
+        : await this.initializeWebLLM(context);
+      if (!didLoad) return;
 
+      this.progressContainer.classList.remove("active");
       this.isReady = true;
-      this.messages = [{
-        role: "system",
-        content: this.buildSystemPrompt(context),
-      }];
-      this.progressContainer.classList.remove("active");
       this.enableInteractions();
-      this.updateStatus("ready", `AI ready for ${context.studentName}'s ${context.testName}`);
-      this.addMessage("ai", "Model loaded. You can ask for weak-topic notes, markdown study material, or practice quizzes based on this report.");
-      this.checkModelCacheStatus();
+      this.updateStatus("ready", `${provider === "gemini" ? "Gemini" : "WebLLM"} ready for ${context.studentName}'s ${context.testName}`);
+      if (provider === "webllm") {
+        this.addMessage("ai", "Model loaded. You can ask for weak-topic notes, markdown study material, or practice quizzes based on this report.");
+      }
     } catch (error) {
-      console.error("Failed to load model:", error);
+      console.error("Failed to load AI provider:", error);
       this.progressContainer.classList.remove("active");
-      this.updateStatus("error", "Failed to load model");
-      this.addMessage("ai", `Error loading model: ${error.message || "Unknown error"}`);
+      this.updateStatus("error", "Failed to load AI");
+      this.addMessage("ai", `Error loading ${provider === "gemini" ? "Gemini" : "model"}: ${error.message || "Unknown error"}`);
     } finally {
       this.loadBtn.disabled = false;
       this.modelSelect.disabled = false;
@@ -838,10 +978,13 @@ class ReportAIChatPanel {
       const modelCacheNames = cacheNames.filter((name) => name.includes("webllm") || name.includes("mlc"));
 
       Array.from(this.modelSelect.options).forEach((option) => {
-        option.textContent = option.textContent.replace(/^[✓↓]\s*/, "");
+        if ((option.dataset.provider || "webllm") === "webllm") {
+          option.textContent = option.textContent.replace(/^[✓↓]\s*/, "");
+        }
       });
 
       for (const option of this.modelSelect.options) {
+        if ((option.dataset.provider || "webllm") !== "webllm") continue;
         const modelId = option.value;
         let downloaded = false;
 
@@ -866,11 +1009,16 @@ class ReportAIChatPanel {
 
   updateDeleteButtonVisibility() {
     if (!this.deleteBtn || !this.modelSelect) return;
+    if (this.getSelectedProvider() !== "webllm") {
+      this.deleteBtn.style.display = "none";
+      return;
+    }
     const downloaded = this.modelCacheStatus[this.modelSelect.value];
     this.deleteBtn.style.display = downloaded ? "inline-flex" : "none";
   }
 
   async deleteModel() {
+    if (this.getSelectedProvider() !== "webllm") return;
     const modelId = this.modelSelect.value;
     if (!confirm(`Delete ${modelId} from local cache?`)) return;
 
@@ -954,7 +1102,7 @@ class ReportAIChatPanel {
     this.messagesEl.innerHTML = `
       <div class="ai-chat-message ai">
         <div class="message-bubble markdown-content">${context
-          ? "This report is ready. Load a model to start asking about weak topics and revision material."
+          ? "This report is ready. Load WebLLM or Gemini to start asking about weak topics and revision material."
           : "Open a single test report first, then load a model to start."}</div>
         <span class="message-time">Just now</span>
       </div>
@@ -963,7 +1111,7 @@ class ReportAIChatPanel {
 
   handleQuickAction(action) {
     if (!this.isReady) {
-      this.addMessage("ai", "Load a model first so I can work with this report.");
+      this.addMessage("ai", "Load WebLLM or Gemini first so I can work with this report.");
       return;
     }
 
@@ -1016,7 +1164,7 @@ class ReportAIChatPanel {
 
   async sendMessage() {
     if (!this.isReady || this.isLoading) {
-      if (!this.isReady) this.addMessage("ai", "Load a model first so I can answer using this report.");
+      if (!this.isReady) this.addMessage("ai", "Load WebLLM or Gemini first so I can answer using this report.");
       return;
     }
 
@@ -1049,12 +1197,17 @@ class ReportAIChatPanel {
 
     try {
       this.messages.push({ role: "user", content: prompt });
-      const reply = await this.engine.chat.completions.create({
-        messages: this.messages,
-        temperature: 0.7,
-        max_tokens: 1200,
-      });
-      const responseText = reply.choices[0].message.content;
+      let responseText = "";
+      if (this.provider === "gemini") {
+        responseText = await this.generateGeminiResponse(this.messages, { temperature: 0.7, maxOutputTokens: 1200 });
+      } else {
+        const reply = await this.engine.chat.completions.create({
+          messages: this.messages,
+          temperature: 0.7,
+          max_tokens: 1200,
+        });
+        responseText = reply.choices[0].message.content;
+      }
       this.messages.push({ role: "assistant", content: responseText });
       if (this.messages.length > 12) {
         this.messages = [this.messages[0], ...this.messages.slice(-11)];
@@ -1071,10 +1224,44 @@ class ReportAIChatPanel {
     }
   }
 
+  async generateGeminiResponse(messages, generationConfig = { temperature: 0.7, maxOutputTokens: 1200 }) {
+    const apiKey = (this.geminiApiKeyInput?.value || this.getSavedGeminiApiKey()).trim();
+    if (!apiKey) throw new Error("Gemini API key missing");
+
+    const modelId = this.getSelectedModelId();
+    const systemMessage = messages.find((message) => message.role === "system")?.content || "";
+    const contents = messages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: message.role === "assistant" ? "model" : "user",
+        parts: [{ text: message.content }],
+      }));
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: systemMessage ? { parts: [{ text: systemMessage }] } : undefined,
+        contents,
+        generationConfig,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Gemini request failed with ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n").trim() || "No response returned.";
+  }
+
   async generateQuizQuestions() {
     const context = this.getCurrentReportContext();
     if (!this.isReady) {
-      this.addMessage("ai", "Load a model first so I can generate quiz questions.");
+      this.addMessage("ai", "Load WebLLM or Gemini first so I can generate quiz questions.");
       return;
     }
     if (!context) {
@@ -1098,13 +1285,13 @@ class ReportAIChatPanel {
         context.contextText.substring(0, 12000),
       ].join("\n");
 
-      const reply = await this.engine.chat.completions.create({
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.7,
-        max_tokens: 1000,
-      });
-
-      const response = reply.choices[0].message.content || "";
+      const response = this.provider === "gemini"
+        ? await this.generateGeminiResponse([{ role: "user", content: prompt }], { temperature: 0.7, maxOutputTokens: 1000 })
+        : (await this.engine.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.7,
+            max_tokens: 1000,
+          })).choices[0].message.content || "";
       const qaPairs = [];
       let currentQuestion = null;
 
@@ -1209,12 +1396,14 @@ class ReportAIChatPanel {
           content: `Question: ${qaPair.question}\nExpected answer: ${qaPair.answer}\nStudent answer: ${text}`,
         },
       ];
-      const reply = await this.engine.chat.completions.create({
-        messages,
-        temperature: 0.7,
-        max_tokens: 700,
-      });
-      this.addMessage("ai", reply.choices[0].message.content.trim());
+      const feedback = this.provider === "gemini"
+        ? await this.generateGeminiResponse(messages, { temperature: 0.7, maxOutputTokens: 700 })
+        : (await this.engine.chat.completions.create({
+            messages,
+            temperature: 0.7,
+            max_tokens: 700,
+          })).choices[0].message.content.trim();
+      this.addMessage("ai", feedback);
     } catch (error) {
       console.error("Quiz evaluation error:", error);
       this.addMessage("ai", "I couldn't evaluate that answer right now. Please try again.");
@@ -2083,7 +2272,7 @@ function initSingleTestCSVExport(testName, studentName) {
         q.status
       ])
     ];
-    downloadCSV(`${safeTestName}_${safeStudentName}_Detail.csv`, rows);
+    downloadCSV(`${safeTestName}_Detail.csv`, rows);
   });
 
   summaryBtn.addEventListener("click", () => {
@@ -2091,7 +2280,7 @@ function initSingleTestCSVExport(testName, studentName) {
       ["Subject", "Topic", "Num_Correct", "Num_Wrong", "Num_Skipped", "Questions"],
       ...buildCurrentTestSummaryData().map((s) => [s.subject, s.topic, s.correct, s.wrong, s.skipped, s.total]),
     ];
-    downloadCSV(`${safeTestName}_${safeStudentName}_Summary.csv`, rows);
+    downloadCSV(`${safeTestName}_Summary.csv`, rows);
   });
 }
 
@@ -2339,8 +2528,6 @@ async function initProgressCSVExport(studentId, rows, studentName) {
   const btn = document.getElementById("exportProgressCSV");
   if (!btn) return;
 
-  const safeStudentName = (studentName || "Student").replace(/[^a-zA-Z0-9]/g, "_");
-
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading...';
@@ -2422,7 +2609,7 @@ async function initProgressCSVExport(studentId, rows, studentName) {
         });
       }
 
-      downloadCSV(`${safeStudentName}_Progress.csv`, csvRows);
+      downloadCSV(`Progress_Report.csv`, csvRows);
     } catch (err) {
       console.error("Export CSV error:", err);
       alert("Failed to export CSV. Please try again.");
