@@ -2455,9 +2455,22 @@ function renderStudentProgress(student, studentId, rows) {
     structuredData,
   });
 
-  const tableRowsHtml = rows
+  const tableRowsHtml = [...rows]
+    .sort((a, b) => {
+      const at = a.dateObj?.getTime?.();
+      const bt = b.dateObj?.getTime?.();
+      const aValid = typeof at === "number" && !Number.isNaN(at);
+      const bValid = typeof bt === "number" && !Number.isNaN(bt);
+      if (aValid && bValid) return bt - at;
+      if (aValid) return -1;
+      if (bValid) return 1;
+      return String(a.testName).localeCompare(String(b.testName));
+    })
     .map((r) => {
       const displayDate = formatDate(r.dateObj, r.testDateRaw);
+      const sortableDate = r.dateObj && !Number.isNaN(r.dateObj.getTime())
+        ? r.dateObj.getTime()
+        : 0;
       const reportHref = `report.html?testId=${encodeURIComponent(r.testId)}&studentId=${encodeURIComponent(studentId)}`;
       const badgeClass = (Number(r.percent) || 0) >= 70 ? "bg-success" : "bg-danger";
       const correctText =
@@ -2467,7 +2480,7 @@ function renderStudentProgress(student, studentId, rows) {
 
       return `
         <tr>
-          <td>${escapeHtml(displayDate)}</td>
+          <td data-order="${sortableDate}">${escapeHtml(displayDate)}</td>
           <td>${escapeHtml(r.testName || "Test")}</td>
           <td><span class="badge ${badgeClass}">${escapeHtml(r.percent)}%</span></td>
           <td>${escapeHtml(correctText)}</td>
@@ -2620,6 +2633,14 @@ function initResultsTable() {
       searchable: true,
       fixedHeight: true,
       perPage: 10,
+      columns: [
+        {
+          select: 0,
+          type: "date",
+          sort: "desc",
+          format: "x",
+        },
+      ],
     });
   }
 }
