@@ -2233,18 +2233,42 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   console.log("Final questions array for rendering:", questions);
   questions.forEach((question, index) => {
     const questionNumber = index + 1;
-    let userKey = `Q${questionNumber}`;
-    // subjectname_questionnumber "Mathematics_1" without _Q prefix for questionnumber
-    // replace underscore with underscore followed by Q to separate subject and question number
-    if (question.subjectname_questionnumber){
-      question.subjectname_questionnumber = question.subjectname_questionnumber.replace("_", "_Q");
-      userKey = question.subjectname_questionnumber;
-    }
-    let userAnswer = result[userKey];
-    if (userAnswer == null && result[`Generic_Q${questionNumber}`] != null) {
-      userAnswer = result[`Generic_Q${questionNumber}`];
-    }
     const subject = normalizeFilterValue(question.Subject || question.section);
+
+    // Build candidate keys to lookup user answer (handles various result key formats)
+    const candidateKeys = [];
+    if (question.subjectname_questionnumber) {
+      candidateKeys.push(String(question.subjectname_questionnumber).replace("_", "_Q"));
+    }
+    candidateKeys.push(`${subject}_Q${questionNumber}`);
+    candidateKeys.push(`Generic_Q${questionNumber}`);
+    candidateKeys.push(`Q${questionNumber}`);
+    // Also try subject_number format (e.g., "Mathematics_1")
+    if (subject && subject !== "General") {
+      candidateKeys.push(`${subject}_${questionNumber}`);
+    }
+
+    // Find first matching key in result
+    let userAnswer = null;
+    for (const key of candidateKeys) {
+      if (Object.prototype.hasOwnProperty.call(result || {}, key)) {
+        userAnswer = result[key];
+        break;
+      }
+    }
+
+    // Fallback: try to match by suffix if no exact match found
+    if (userAnswer == null) {
+      const suffix = `_Q${questionNumber}`;
+      const suffixCandidates = Object.keys(result || {}).filter((key) => key.endsWith(suffix));
+      if (suffixCandidates.length === 1) {
+        userAnswer = result[suffixCandidates[0]];
+      } else if (suffixCandidates.length > 1 && subject) {
+        // If multiple candidates, try to match by subject
+        const sameSubject = suffixCandidates.find((key) => key.startsWith(`${subject}_Q`));
+        if (sameSubject) userAnswer = result[sameSubject];
+      }
+    }
     const chapter = normalizeFilterValue(question.Chapter);
     const topic = normalizeFilterValue(question.Topic);
     const subtopic = normalizeFilterValue(question.Subtopic);
