@@ -519,6 +519,7 @@ let currentTestQuestionsData = [];
 let currentSingleTestAIContext = null;
 let reportAIChatPanel = null;
 let ctsStatsDataTable = null;
+let statsDataTables = {};
 const DEFAULT_SCORING_RULES = {
   correct: 3,
   wrong: -1,
@@ -1700,7 +1701,8 @@ function buildGroupedPerformanceRows(records, keys, scoringRules, { wrongOnly = 
     });
 }
 
-function renderPerformanceTableSection(title, columns, rows, emptyMessage) {
+function renderPerformanceTableSection(title, columns, rows, emptyMessage, tableId) {
+  const tableAttr = tableId ? ` id="${escapeHtml(tableId)}"` : '';
   return `
     <div class="mb-4">
       <div class="d-flex justify-content-between align-items-center mb-2">
@@ -1709,7 +1711,7 @@ function renderPerformanceTableSection(title, columns, rows, emptyMessage) {
       </div>
       ${rows.length ? `
         <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
+          <table class="table table-sm align-middle mb-0"${tableAttr}>
             <thead>
               <tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>
             </thead>
@@ -1790,7 +1792,8 @@ function renderSubjectStatsTable(records, scoringRules) {
       "Per Subject Stats",
       ["Subject", "Questions", "Correct", "Wrong", "Skipped", "Score", "Score %", "Grade", "Point", "Status"],
       subjectRows,
-      "No subject data available for the current filter."
+      "No subject data available for the current filter.",
+      "statsTableSubject"
     ),
   ];
 
@@ -1799,7 +1802,8 @@ function renderSubjectStatsTable(records, scoringRules) {
       "Chapter Stats",
       ["Subject", "Chapter", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
       chapterRows,
-      "No chapters with wrong answers for the current filter."
+      "No chapters with wrong answers for the current filter.",
+      "statsTableChapter"
     ));
   }
 
@@ -1808,7 +1812,8 @@ function renderSubjectStatsTable(records, scoringRules) {
       "Topic Stats",
       ["Subject", "Chapter", "Topic", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
       topicRows,
-      "No topics with wrong answers for the current filter."
+      "No topics with wrong answers for the current filter.",
+      "statsTableTopic"
     ));
   }
 
@@ -1817,7 +1822,8 @@ function renderSubjectStatsTable(records, scoringRules) {
       "Subtopic Stats",
       ["Subject", "Chapter", "Topic", "Subtopic", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
       subtopicRows,
-      "No subtopics with wrong answers for the current filter."
+      "No subtopics with wrong answers for the current filter.",
+      "statsTableSubtopic"
     ));
   }
 
@@ -1867,6 +1873,83 @@ function renderQuestionTable(records) {
       </table>
     </div>
   `;
+}
+
+function initStatsDataTables() {
+  if (!window.simpleDatatables?.DataTable) return;
+
+  // Destroy existing DataTables
+  Object.values(statsDataTables).forEach((dt) => dt?.destroy?.());
+  statsDataTables = {};
+
+  const tableConfigs = {
+    statsTableSubject: {
+      perPage: 10,
+      columns: [
+        { select: 0, sort: "asc" }, // Subject
+        { select: 1, type: "number", sort: "desc" }, // Questions
+        { select: 2, type: "number", sort: "desc" }, // Correct
+        { select: 3, type: "number", sort: "desc" }, // Wrong
+        { select: 4, type: "number", sort: "desc" }, // Skipped
+        { select: 5, sort: "desc" }, // Score
+        { select: 6, type: "number", sort: "desc" }, // Score %
+        { select: 7, sort: "asc" }, // Grade
+        { select: 8, type: "number", sort: "desc" }, // Point
+        { select: 9, sort: "asc" }, // Status
+      ],
+    },
+    statsTableChapter: {
+      perPage: 10,
+      columns: [
+        { select: 0, sort: "asc" }, // Subject
+        { select: 1, sort: "asc" }, // Chapter
+        { select: 2, type: "number", sort: "desc" }, // Questions
+        { select: 3, type: "number", sort: "desc" }, // Wrong
+        { select: 4, type: "number", sort: "desc" }, // Skipped
+        { select: 5, type: "number", sort: "desc" }, // Correct
+        { select: 6, type: "number", sort: "desc" }, // Score %
+      ],
+    },
+    statsTableTopic: {
+      perPage: 10,
+      columns: [
+        { select: 0, sort: "asc" }, // Subject
+        { select: 1, sort: "asc" }, // Chapter
+        { select: 2, sort: "asc" }, // Topic
+        { select: 3, type: "number", sort: "desc" }, // Questions
+        { select: 4, type: "number", sort: "desc" }, // Wrong
+        { select: 5, type: "number", sort: "desc" }, // Skipped
+        { select: 6, type: "number", sort: "desc" }, // Correct
+        { select: 7, type: "number", sort: "desc" }, // Score %
+      ],
+    },
+    statsTableSubtopic: {
+      perPage: 10,
+      columns: [
+        { select: 0, sort: "asc" }, // Subject
+        { select: 1, sort: "asc" }, // Chapter
+        { select: 2, sort: "asc" }, // Topic
+        { select: 3, sort: "asc" }, // Subtopic
+        { select: 4, type: "number", sort: "desc" }, // Questions
+        { select: 5, type: "number", sort: "desc" }, // Wrong
+        { select: 6, type: "number", sort: "desc" }, // Skipped
+        { select: 7, type: "number", sort: "desc" }, // Correct
+        { select: 8, type: "number", sort: "desc" }, // Score %
+      ],
+    },
+  };
+
+  Object.entries(tableConfigs).forEach(([tableId, config]) => {
+    const table = document.getElementById(tableId);
+    if (table) {
+      statsDataTables[tableId] = new window.simpleDatatables.DataTable(table, {
+        searchable: true,
+        fixedHeight: true,
+        perPage: config.perPage,
+        columns: config.columns,
+      });
+    }
+  });
 }
 
 function initSingleTestInsights() {
@@ -2019,6 +2102,9 @@ function initSingleTestInsights() {
     `;
 
     subjectStatsTable.innerHTML = renderSubjectStatsTable(records, scoringRules);
+
+    // Initialize DataTables on stats tables
+    initStatsDataTables();
   };
 
   const applyFieldVisibility = () => {
