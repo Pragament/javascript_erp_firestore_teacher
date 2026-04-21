@@ -1738,6 +1738,11 @@ function renderSubjectStatsTable(records, scoringRules) {
       </tr>
     `);
 
+  // Check if there's actual chapter/topic/subtopic data (not just "—" placeholders)
+  const hasChapterData = (records || []).some((r) => r.chapter && r.chapter.trim() && r.chapter !== "—");
+  const hasTopicData = (records || []).some((r) => r.topic && r.topic.trim() && r.topic !== "—");
+  const hasSubtopicData = (records || []).some((r) => r.subtopic && r.subtopic.trim() && r.subtopic !== "—");
+
   const chapterRows = buildGroupedPerformanceRows(records, ["subject", "chapter"], scoringRules, { wrongOnly: true })
     .map(({ values, metrics }) => `
       <tr>
@@ -1780,32 +1785,43 @@ function renderSubjectStatsTable(records, scoringRules) {
       </tr>
     `);
 
-  return [
+  const sections = [
     renderPerformanceTableSection(
       "Per Subject Stats",
       ["Subject", "Questions", "Correct", "Wrong", "Skipped", "Score", "Score %", "Grade", "Point", "Status"],
       subjectRows,
       "No subject data available for the current filter."
     ),
-    renderPerformanceTableSection(
+  ];
+
+  if (hasChapterData) {
+    sections.push(renderPerformanceTableSection(
       "Chapter Stats",
       ["Subject", "Chapter", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
       chapterRows,
       "No chapters with wrong answers for the current filter."
-    ),
-    renderPerformanceTableSection(
+    ));
+  }
+
+  if (hasTopicData) {
+    sections.push(renderPerformanceTableSection(
       "Topic Stats",
       ["Subject", "Chapter", "Topic", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
       topicRows,
       "No topics with wrong answers for the current filter."
-    ),
-    renderPerformanceTableSection(
+    ));
+  }
+
+  if (hasSubtopicData) {
+    sections.push(renderPerformanceTableSection(
       "Subtopic Stats",
       ["Subject", "Chapter", "Topic", "Subtopic", "Questions", "Wrong", "Skipped", "Correct", "Score %"],
       subtopicRows,
       "No subtopics with wrong answers for the current filter."
-    ),
-  ].join("");
+    ));
+  }
+
+  return sections.join("");
 }
 
 function renderQuestionTable(records) {
