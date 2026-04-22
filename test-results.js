@@ -233,7 +233,7 @@ function renderStudentResults(test, results, students) {
       const studentName = student?.name || result.name || "Unknown";
       const studentPhone = student?.phone || "";
       const score = calculateScore(result);
-      const reportUrl = `report.html?testId=${encodeURIComponent(test.id)}&studentId=${encodeURIComponent(result.studentId)}`;
+      const reportUrl = `report.html?studentId=${encodeURIComponent(result.studentId)}&testId=${encodeURIComponent(test.id)}`;
       const progressUrl = `report.html?studentId=${encodeURIComponent(result.studentId)}`;
 
       return `
@@ -245,23 +245,28 @@ function renderStudentResults(test, results, students) {
           <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
             <span class="result-badge ${score >= 70 ? "correct" : "wrong"}">${score}%</span>
             <a href="${reportUrl}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
-              <i class="bi bi-file-text"></i> View Report
+              <i class="bi bi-file-text"></i> View this test Report
             </a>
             <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
-              <i class="bi bi-graph-up"></i> Progress
+              <i class="bi bi-graph-up"></i> Progress(all tests)
             </a>
             <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${progressUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${progressUrl}`}"
                target="_blank"
                class="btn btn-sm"
                style="background:#25D366;color:white;border:none">
-              <i class="bi bi-whatsapp"></i> WhatsApp
+              <i class="bi bi-whatsapp"></i> WhatsApp all tests
             </a>
-            <button type="button"
+            ${navigator.share ? `<button type="button"
+               class="btn btn-sm share-link-btn"
+               data-url="${window.location.origin}/${reportUrl}"
+               style="background:#6c757d;color:white;border:none">
+              <i class="bi bi-share"></i> Share this test
+            </button>` : `<button type="button"
                class="btn btn-sm copy-link-btn"
                data-url="${window.location.origin}/${reportUrl}"
                style="background:#6c757d;color:white;border:none">
-              <i class="bi bi-link"></i> Copy Link
-            </button>
+              <i class="bi bi-link"></i> Copy this test Link
+            </button>`}
           </div>
         </div>
       `;
@@ -283,6 +288,21 @@ function renderStudentResults(test, results, students) {
       } catch (err) {
         console.error("Failed to copy:", err);
         window.prompt("Copy this link:", url);
+      }
+    });
+  });
+
+  contentEl.querySelectorAll(".share-link-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const url = btn.dataset.url;
+      try {
+        await navigator.share({
+          title: 'Test Report',
+          text: 'Check out this test report',
+          url: url
+        });
+      } catch (err) {
+        console.error("Failed to share:", err);
       }
     });
   });

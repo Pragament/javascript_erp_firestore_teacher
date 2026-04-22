@@ -3145,7 +3145,7 @@ function renderStudentProgress(student, studentId, rows) {
           ${subjectScoreCells}
           <td>
             <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none" href="${reportHref}" target="_blank">
-              View
+              View Report
             </a>
           </td>
         </tr>
