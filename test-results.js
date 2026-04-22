@@ -38,9 +38,13 @@ const auth = firebase.auth();
 const contentEl = document.getElementById("test-results-content");
 const subtitleEl = document.getElementById("test-results-subtitle");
 const testSelectEl = document.getElementById("test-select");
+const sortSelectEl = document.getElementById("sort-select");
 
 let currentTestId = null;
 let availableTests = [];
+let currentTestData = null;
+let currentResultsData = [];
+let currentStudentsData = [];
 
 function setContentHtml(html) {
   contentEl.innerHTML = html;
@@ -205,14 +209,17 @@ async function loadTestResults(testId) {
     ]);
     
     const results = resultsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    renderStudentResults(test, results, students);
+    currentTestData = test;
+    currentResultsData = results;
+    currentStudentsData = students;
+    renderStudentResults(test, results, students, sortSelectEl.value);
   } catch (error) {
     console.error("Failed to load test results:", error);
     showError("Unable to load test results right now.");
   }
 }
 
-function renderStudentResults(test, results, students) {
+function renderStudentResults(test, results, students, sortOption = "name-asc") {
   subtitleEl.textContent = `${test.testName || "Test"} | ${results.length} student result${results.length === 1 ? "" : "s"}`;
 
   if (results.length === 0) {
@@ -222,12 +229,29 @@ function renderStudentResults(test, results, students) {
 
   const studentById = new Map(students.map((student) => [student.studentId, student]));
 
-  const cardsHtml = results
-    .sort((a, b) => {
-      const nameA = studentById.get(a.studentId)?.name || a.name || a.studentId || "";
-      const nameB = studentById.get(b.studentId)?.name || b.name || b.studentId || "";
-      return nameA.localeCompare(nameB);
-    })
+  const sortedResults = [...results].sort((a, b) => {
+    const studentA = studentById.get(a.studentId);
+    const studentB = studentById.get(b.studentId);
+    const nameA = studentA?.name || a.name || a.studentId || "";
+    const nameB = studentB?.name || b.name || b.studentId || "";
+    const scoreA = calculateScore(a);
+    const scoreB = calculateScore(b);
+
+    switch (sortOption) {
+      case "name-asc":
+        return nameA.localeCompare(nameB);
+      case "name-desc":
+        return nameB.localeCompare(nameA);
+      case "score-asc":
+        return scoreA - scoreB;
+      case "score-desc":
+        return scoreB - scoreA;
+      default:
+        return nameA.localeCompare(nameB);
+    }
+  });
+
+  const cardsHtml = sortedResults
     .map((result) => {
       const student = studentById.get(result.studentId);
       const studentName = student?.name || result.name || "Unknown";
@@ -349,7 +373,16 @@ async function initializePage() {
           }
         };
       }
-      
+
+      // Setup sort change listener
+      if (sortSelectEl) {
+        sortSelectEl.onchange = (e) => {
+          if (currentTestData && currentResultsData.length > 0) {
+            renderStudentResults(currentTestData, currentResultsData, currentStudentsData, e.target.value);
+          }
+        };
+      }
+
       // Load results for the URL-specified test
       await loadTestResults(urlTestId);
     } catch (error) {
