@@ -360,6 +360,14 @@ async function initializePage() {
       showError("Please sign in from the teacher dashboard first.");
       return;
     }
+    // Setup sort change listener
+    if (sortSelectEl) {
+      sortSelectEl.onchange = (e) => {
+        if (currentTestData && currentResultsData.length > 0) {
+          renderStudentResults(currentTestData, currentResultsData, currentStudentsData, e.target.value);
+        }
+      };
+    }
     // Load results for the URL-specified test
     await loadTestResults(urlTestId);
     return;
@@ -389,15 +397,6 @@ async function initializePage() {
             newUrl.searchParams.set("testId", selectedTestId);
             window.history.replaceState({}, "", newUrl);
             loadTestResults(selectedTestId);
-          }
-        };
-      }
-
-      // Setup sort change listener
-      if (sortSelectEl) {
-        sortSelectEl.onchange = (e) => {
-          if (currentTestData && currentResultsData.length > 0) {
-            renderStudentResults(currentTestData, currentResultsData, currentStudentsData, e.target.value);
           }
         };
       }
