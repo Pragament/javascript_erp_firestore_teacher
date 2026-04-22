@@ -38,6 +38,32 @@ if (!firebase.apps || firebase.apps.length === 0) {
 const firestore = firebase.firestore();
 const reportContentEl = document.getElementById("report-content");
 
+// Hardcoded student ID mappings for students with different IDs in different tests
+// Format: oldStudentId -> canonicalStudentId
+const STUDENT_ID_MAPPINGS = {
+  "67b70cdf6c2235e4246f5d67": "689da8cef835f5e2e7f61cba",
+  "67b70f6c6c2235e4246f5e41":"689da8cef835f5e2e7f61cb8",
+  "67b70cde6c2235e4246f5d3f":"689da8cef835f5e2e7f61cb2",
+};
+
+// Resolve a student ID to its canonical form (handles hardcoded mappings)
+function resolveCanonicalStudentId(studentId) {
+  return STUDENT_ID_MAPPINGS[studentId] || studentId;
+}
+
+// Get all student IDs that should be treated as the same student
+// This includes the canonical ID and any mapped IDs pointing to it
+function getLinkedStudentIds(canonicalId) {
+  const linkedIds = new Set([canonicalId]);
+  // Add any IDs that map to this canonical ID
+  Object.entries(STUDENT_ID_MAPPINGS).forEach(([oldId, mappedId]) => {
+    if (mappedId === canonicalId) {
+      linkedIds.add(oldId);
+    }
+  });
+  return Array.from(linkedIds);
+}
+
 function setReportHtml(html) {
   reportContentEl.innerHTML = html;
 }
@@ -385,7 +411,8 @@ async function loadSingleTestReport(testId, studentId) {
   ]);
 
   //if (!testSnap.exists || resultSnap.empty || studentSnap.empty) {
-  if (!testSnap.exists || !resultSnap.exists || !studentSnap.exists) {
+  //if (!testSnap.exists || !resultSnap.exists || !studentSnap.exists) {
+  if (!testSnap.exists || !resultSnap.exists) {
     showReportWarning("Data not found");
     return;
   }
@@ -407,20 +434,41 @@ async function loadSingleTestReport(testId, studentId) {
 async function loadStudentProgressReport(studentId) {
   showLoading("Loading student progress...");
 
-  const [student, resultsSnap] = await Promise.all([
-    getStudentByStudentId(studentId),
-    firestore.collection("results").where("studentId", "==", studentId).get(),
+  // Resolve to canonical student ID and get all linked IDs
+  const canonicalStudentId = resolveCanonicalStudentId(studentId);
+  const linkedStudentIds = getLinkedStudentIds(canonicalStudentId);
+  console.log("Loading progress for student:", { inputId: studentId, canonicalId: canonicalStudentId, linkedIds: linkedStudentIds });
+
+  // Fetch student info using canonical ID
+  const [student] = await Promise.all([
+    getStudentByStudentId(canonicalStudentId),
   ]);
-  console.log("Fetched student and results:", { student, resultsSnap });
+
+  // Fetch results for all linked student IDs (same student may have different IDs in different tests)
+  let allResults = [];
+  for (const linkedId of linkedStudentIds) {
+    const resultsSnap = await firestore.collection("results").where("studentId", "==", linkedId).get();
+    const results = resultsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    allResults = allResults.concat(results);
+  }
+  // Remove duplicates (same test result might appear with different student IDs)
+  const seenTestIds = new Set();
+  allResults = allResults.filter((r) => {
+    if (seenTestIds.has(r.testId)) return false;
+    seenTestIds.add(r.testId);
+    return true;
+  });
+
+  console.log("Fetched student and results:", { student, resultsCount: allResults.length, allResults });
 
   // Build student object from results if not found in students collection
   let studentData = student;
-  if (!studentData && !resultsSnap.empty) {
-    const firstResult = resultsSnap.docs[0].data();
+  if (!studentData && allResults.length > 0) {
+    const firstResult = allResults[0];
     studentData = {
-      id: studentId,
+      id: canonicalStudentId,
       name: firstResult.name || "Unknown",
-      studentId: firstResult.studentId || studentId,
+      studentId: firstResult.studentId || canonicalStudentId,
       phone: firstResult.phone || "",
     };
   }
@@ -430,13 +478,13 @@ async function loadStudentProgressReport(studentId) {
     return;
   }
 
-  if (resultsSnap.empty) {
+  if (allResults.length === 0) {
     setReportHtml(`
       <div class="card shadow-sm mb-4">
         <div class="card-body">
           <h5 class="fw-bold mb-3">Student Information</h5>
           <p><strong>Name:</strong> ${escapeHtml(studentData.name || "N/A")}</p>
-          <p><strong>Student ID:</strong> ${escapeHtml(studentData.studentId || studentId)}</p>
+          <p><strong>Student ID:</strong> ${escapeHtml(studentData.studentId || canonicalStudentId)}</p>
 ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone)}</p>` : ''}
         </div>
       </div>
@@ -445,8 +493,8 @@ ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone
     return;
   }
 
-  const results = resultsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  console.log("Mapped results data:", results);
+  const results = allResults;
+  console.log("Using combined results data:", results);
   const testIds = results.map((r) => r.testId).filter(Boolean);
   const testsById = await fetchTestsByIds(testIds);
 
@@ -490,7 +538,7 @@ ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone
     return String(a.testName).localeCompare(String(b.testName));
   });
 
-  renderStudentProgress(studentData, studentId, rows);
+  renderStudentProgress(studentData, canonicalStudentId, rows);
 }
 
 async function loadReportFromQueryParams() {
@@ -2630,10 +2678,10 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
       <h5 class="fw-bold mb-0">Detailed Results</h5>
       <div class="d-flex gap-2 no-print">
         <button id="exportCSVDetail" class="btn btn-sm" style="background:#16a085;color:white;border:none">
-          <i class="bi bi-download"></i> Export Detail CSV
+          <i class="bi bi-download"></i> Export Detail Excel
         </button>
         <button id="exportCSVSummary" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
-          <i class="bi bi-download"></i> Export Summary CSV
+          <i class="bi bi-download"></i> Export Summary Excel
         </button>
       </div>
     </div>
@@ -3263,7 +3311,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h5 class="fw-bold mb-0">All Tests</h5>
           <button id="exportProgressCSV" class="btn btn-sm no-print" style="background:#16a085;color:white;border:none">
-            <i class="bi bi-download"></i> Export CSV
+            <i class="bi bi-download"></i> Export Excel
           </button>
         </div>
         <div class="table-responsive">
@@ -3590,6 +3638,9 @@ async function initProgressCSVExport(studentId, rows, studentName) {
   const btn = document.getElementById("exportProgressCSV");
   if (!btn) return;
 
+  // Get linked student IDs for fetching results
+  const linkedStudentIds = getLinkedStudentIds(studentId);
+
   btn.addEventListener("click", async () => {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading...';
@@ -3601,12 +3652,20 @@ async function initProgressCSVExport(studentId, rows, studentName) {
         const testId = row.testId;
         if (!testId) continue;
 
-        const [testSnap, resultSnap] = await Promise.all([
-          firestore.collection("tests").doc(testId).get(),
-          firestore.collection("results").doc(`${testId}_${studentId}`).get()
-        ]);
+        const testSnap = await firestore.collection("tests").doc(testId).get();
+        if (!testSnap.exists) continue;
 
-        if (!testSnap.exists || !resultSnap.exists) continue;
+        // Try fetching result with each linked student ID
+        let resultSnap = null;
+        for (const linkedId of linkedStudentIds) {
+          const snap = await firestore.collection("results").doc(`${testId}_${linkedId}`).get();
+          if (snap.exists) {
+            resultSnap = snap;
+            break;
+          }
+        }
+
+        if (!resultSnap || !resultSnap.exists) continue;
 
         const test = testSnap.data();
         const result = resultSnap.data();
@@ -3677,7 +3736,7 @@ async function initProgressCSVExport(studentId, rows, studentName) {
       alert("Failed to export CSV. Please try again.");
     } finally {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-download"></i> Export CSV';
+      btn.innerHTML = '<i class="bi bi-download"></i> Export Excel';
     }
   });
 }
