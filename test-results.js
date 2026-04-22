@@ -360,6 +360,9 @@ async function initializePage() {
       showError("Please sign in from the teacher dashboard first.");
       return;
     }
+    // Load results for the URL-specified test
+    await loadTestResults(urlTestId);
+    return;
 
     try {
       // Load teacher sections and all available tests
