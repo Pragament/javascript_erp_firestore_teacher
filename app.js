@@ -147,7 +147,7 @@ function renderSectionSwitcher() {
 }
 
 function getTestResultsPageUrl(testId) {
-    return `test-results.html?testId=${encodeURIComponent(testId)}`;
+    return `test-results.html?testId=${encodeURIComponent(testId)}&sectionId=${encodeURIComponent(currentSectionId)}`;
 }
 
 // Get teacher's assigned sections

@@ -96,6 +96,9 @@ function normalizeAssignedSections(snapshot) {
 function getTestIdFromQuery() {
   return new URLSearchParams(window.location.search).get("testId");
 }
+function getSectionIdFromQuery() {
+  return new URLSearchParams(window.location.search).get("sectionId");
+}
 
 async function fetchTeacherSections(email) {
   const snapshot = await firestore
@@ -257,8 +260,21 @@ function renderStudentResults(test, results, students, sortOption = "name-asc") 
       const studentName = student?.name || result.name || "Unknown";
       const studentPhone = student?.phone || "";
       const score = calculateScore(result);
-      const reportUrl = `report.html?studentId=${encodeURIComponent(result.studentId)}&testId=${encodeURIComponent(test.id)}`;
-      const progressUrl = `report.html?studentId=${encodeURIComponent(result.studentId)}`;
+      const currentSectionId = test.sectionId || getSectionIdFromQuery() || "";
+      const reportUrl = `report.html?studentId=${result.studentId}&testId=${test.id}&sectionId=${currentSectionId}`;
+
+      const progressUrl = `report.html?studentId=${result.studentId}&sectionId=${currentSectionId}`;
+
+      const reportLink = `${window.location.origin}/${progressUrl}`;
+
+      // IMPORTANT: do NOT encode parts earlier
+      const message = `Hi ${studentName}, your test report: ${reportLink}`;
+
+      const whatsappBase = studentPhone
+        ? `https://wa.me/${studentPhone.replace(/\D/g, "")}`
+        : `https://wa.me/`;
+
+      const whatsappUrl = `${whatsappBase}?text=${encodeURIComponent(message)}`;
 
       return `
         <div class="student-card">
@@ -274,10 +290,10 @@ function renderStudentResults(test, results, students, sortOption = "name-asc") 
             <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
               <i class="bi bi-graph-up"></i> Progress(all tests)
             </a>
-            <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${progressUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${progressUrl}`}"
-               target="_blank"
-               class="btn btn-sm"
-               style="background:#25D366;color:white;border:none">
+            <a href="${whatsappUrl}"
+              target="_blank"
+              class="btn btn-sm"
+              style="background:#25D366;color:white;border:none">
               <i class="bi bi-whatsapp"></i> WhatsApp all tests
             </a>
             ${navigator.share ? `<button type="button"
