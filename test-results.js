@@ -250,7 +250,7 @@ function renderStudentResults(test, results, students) {
             <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
               <i class="bi bi-graph-up"></i> Progress
             </a>
-            <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${reportUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${reportUrl}`}"
+            <a href="${studentPhone ? `https://wa.me/${studentPhone.replace(/\D/g, "")}?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${progressUrl}` : `https://wa.me/?text=Hi%20${encodeURIComponent(studentName)},%20your%20test%20report:%20${window.location.origin}/${progressUrl}`}"
                target="_blank"
                class="btn btn-sm"
                style="background:#25D366;color:white;border:none">
