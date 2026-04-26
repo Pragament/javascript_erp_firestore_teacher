@@ -283,7 +283,7 @@ function renderStudentsTable() {
                     <tr>
                         <th class="student-header" rowspan="2">Student</th>
                         <th class="student-header" rowspan="2">Roll No</th>
-                        <th class="category-header" colspan="5">${termLabel} Ratings</th>
+                        <th class="category-header" colspan="20">${termLabel} Ratings</th>
                         <th class="student-header" rowspan="2">Teacher Notes</th>
                     </tr>
                     <tr>
