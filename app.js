@@ -53,13 +53,58 @@ const elements = {
     timetableSection: document.getElementById('timetable-section'),
     timetableYearSelect: document.getElementById('timetable-year-select'),
     timetableContainer: document.getElementById('timetable-container'),
-    refreshTimetable: document.getElementById('refresh-timetable')
+    refreshTimetable: document.getElementById('refresh-timetable'),
+    viewTableBtn: document.getElementById('view-table'),
+    viewCalendarBtn: document.getElementById('view-calendar'),
+    addEventBtn: document.getElementById('add-event-btn'),
+    eventModal: document.getElementById('eventModal'),
+    eventModalTitle: document.getElementById('event-modal-title'),
+    eventIdInput: document.getElementById('event-id'),
+    eventTitleInput: document.getElementById('event-title'),
+    eventDateInput: document.getElementById('event-date'),
+    eventPeriodInput: document.getElementById('event-period'),
+    eventClassInput: document.getElementById('event-class'),
+    eventDescriptionInput: document.getElementById('event-description'),
+    eventPSEDTags: document.getElementById('event-psed-tags'),
+    eventCustomTagsInput: document.getElementById('event-custom-tags'),
+    saveEventBtn: document.getElementById('save-event-btn'),
+    deleteEventBtn: document.getElementById('delete-event-btn')
 };
 
 let studentsDataTable = null;
 
 // Day order for timetable display
 const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+// Calendar and event globals
+let currentView = 'table'; // 'table' or 'calendar'
+let currentCalendarDate = new Date();
+let teacherEvents = [];
+let selectedPSEDIndicators = [];
+
+// PSED indicators for event tagging
+const psedIndicators = [
+    { id: 'self_awareness', name: 'Self-awareness', category: 'personal' },
+    { id: 'goal_setting', name: 'Goal Setting', category: 'personal' },
+    { id: 'decision_making', name: 'Decision-making', category: 'personal' },
+    { id: 'self_discipline', name: 'Self-discipline', category: 'personal' },
+    { id: 'growth_mindset', name: 'Growth Mindset', category: 'personal' },
+    { id: 'collaboration', name: 'Collaboration', category: 'social' },
+    { id: 'respect_diversity', name: 'Respect Diversity', category: 'social' },
+    { id: 'communication', name: 'Communication', category: 'social' },
+    { id: 'conflict_resolution', name: 'Conflict Resolution', category: 'social' },
+    { id: 'digital_responsibility', name: 'Digital Responsibility', category: 'social' },
+    { id: 'emotional_awareness', name: 'Emotional Awareness', category: 'emotional' },
+    { id: 'stress_management', name: 'Stress Management', category: 'emotional' },
+    { id: 'confidence', name: 'Confidence', category: 'emotional' },
+    { id: 'resilience', name: 'Resilience', category: 'emotional' },
+    { id: 'empathy', name: 'Empathy', category: 'emotional' },
+    { id: 'critical_thinking', name: 'Critical Thinking', category: 'lifeskills' },
+    { id: 'problem_solving', name: 'Problem-solving', category: 'lifeskills' },
+    { id: 'ethical_decisions', name: 'Ethical Decisions', category: 'lifeskills' },
+    { id: 'community_responsibility', name: 'Community', category: 'lifeskills' },
+    { id: 'environmental_awareness', name: 'Environmental', category: 'lifeskills' }
+];
 
 // Authentication state listener
 auth.onAuthStateChanged(async (user) => {
@@ -538,6 +583,9 @@ async function loadTeacherTimetable() {
 
         // Pass teacherId and useTeacherId flag to render function
         renderTeacherTimetable(teacherIdentifier, useTeacherId);
+        
+        // Also load teacher events for calendar view
+        await loadTeacherEvents();
     } catch (error) {
         console.error('Error loading timetable:', error);
         elements.timetableContainer.innerHTML = `
@@ -747,4 +795,354 @@ if (elements.refreshTimetable) {
         teacherSchoolId = null;
         loadTeacherTimetable();
     });
+}
+
+// ==================== CALENDAR VIEW FUNCTIONS ====================
+
+// Toggle between table and calendar view
+function toggleView(view) {
+    currentView = view;
+    if (view === 'table') {
+        elements.viewTableBtn?.classList.add('active');
+        elements.viewCalendarBtn?.classList.remove('active');
+        elements.addEventBtn?.classList.add('d-none');
+        // Reload timetable to show table view
+        if (timetableData) {
+            renderTeacherTimetable(teacherName || extractTeacherNameFromEmail(currentUser?.email), false);
+        }
+    } else {
+        elements.viewTableBtn?.classList.remove('active');
+        elements.viewCalendarBtn?.classList.add('active');
+        elements.addEventBtn?.classList.remove('d-none');
+        renderCalendar();
+        loadTeacherEvents();
+    }
+}
+
+// Render calendar view
+function renderCalendar() {
+    if (!elements.timetableContainer) return;
+
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+    const monthName = currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    // Get first day of month and number of days
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startDayOfWeek = firstDay.getDay(); // 0 = Sunday
+
+    // Adjust for Monday start (optional - change if you want Sunday start)
+    const adjustedStartDay = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
+
+    let html = `
+        <div class="calendar-nav">
+            <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarMonth(-1)">
+                <i class="bi bi-chevron-left"></i> Prev
+            </button>
+            <span class="calendar-month-year">${monthName}</span>
+            <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarMonth(1)">
+                Next <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+        <div class="calendar-view">
+            <div class="calendar-header">Mon</div>
+            <div class="calendar-header">Tue</div>
+            <div class="calendar-header">Wed</div>
+            <div class="calendar-header">Thu</div>
+            <div class="calendar-header">Fri</div>
+            <div class="calendar-header">Sat</div>
+            <div class="calendar-header">Sun</div>
+    `;
+
+    // Previous month days
+    const prevMonth = new Date(year, month, 0);
+    const daysInPrevMonth = prevMonth.getDate();
+    for (let i = adjustedStartDay - 1; i >= 0; i--) {
+        const day = daysInPrevMonth - i;
+        html += `<div class="calendar-day other-month"><div class="calendar-day-number">${day}</div></div>`;
+    }
+
+    // Current month days
+    const today = new Date();
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const isToday = today.getFullYear() === year && today.getMonth() === month && today.getDate() === day;
+        const dayClass = isToday ? 'calendar-day today' : 'calendar-day';
+
+        // Get events for this day
+        const dayEvents = teacherEvents.filter(e => e.date === dateStr);
+
+        html += `<div class="${dayClass}" onclick="openEventModal('${dateStr}')">`;
+        html += `<div class="calendar-day-number">${day}</div>`;
+
+        // Render events
+        dayEvents.forEach(event => {
+            const eventClass = getEventStatusClass(event.date);
+            const tagsHtml = event.psedTags?.map(tag => `<span class="event-tag psed-tag-${getPSEDTagCategory(tag)}">${tag}</span>`).join('') || '';
+            html += `
+                <div class="calendar-event ${eventClass}" onclick="event.stopPropagation(); editEvent('${event.id}')">
+                    <strong>${escapeHtml(event.period)}</strong> ${escapeHtml(event.title)}
+                    ${tagsHtml}
+                </div>
+            `;
+        });
+
+        html += '</div>';
+    }
+
+    // Next month days
+    const totalCells = adjustedStartDay + daysInMonth;
+    const remainingCells = 35 - totalCells; // 5 rows x 7 days = 35
+    for (let day = 1; day <= remainingCells; day++) {
+        html += `<div class="calendar-day other-month"><div class="calendar-day-number">${day}</div></div>`;
+    }
+
+    html += '</div>';
+    elements.timetableContainer.innerHTML = html;
+}
+
+// Change calendar month
+function changeCalendarMonth(delta) {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+    renderCalendar();
+}
+
+// Get event status class based on date
+function getEventStatusClass(eventDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const event = new Date(eventDate);
+    event.setHours(0, 0, 0, 0);
+
+    if (event.getTime() === today.getTime()) return 'event-today';
+    if (event < today) return 'event-past';
+    return 'event-upcoming';
+}
+
+// Get PSED tag category for styling
+function getPSEDTagCategory(tagId) {
+    const indicator = psedIndicators.find(p => p.id === tagId);
+    return indicator ? indicator.category : 'personal';
+}
+
+// ==================== EVENT MANAGEMENT FUNCTIONS ====================
+
+// Initialize PSED tags in modal
+function initPSEDTagSelector() {
+    if (!elements.eventPSEDTags) return;
+
+    elements.eventPSEDTags.innerHTML = psedIndicators.map(indicator => `
+        <span class="psed-tag psed-tag-${indicator.category}" 
+              data-indicator="${indicator.id}"
+              onclick="togglePSEDTag('${indicator.id}')">
+            ${indicator.name}
+        </span>
+    `).join('');
+}
+
+// Toggle PSED tag selection
+function togglePSEDTag(indicatorId) {
+    const index = selectedPSEDIndicators.indexOf(indicatorId);
+    const tagElement = elements.eventPSEDTags?.querySelector(`[data-indicator="${indicatorId}"]`);
+
+    if (index > -1) {
+        selectedPSEDIndicators.splice(index, 1);
+        tagElement?.classList.remove('selected');
+    } else {
+        selectedPSEDIndicators.push(indicatorId);
+        tagElement?.classList.add('selected');
+    }
+}
+
+// Open event modal (add new)
+function openEventModal(dateStr = null) {
+    if (!elements.eventModal) return;
+
+    // Reset form
+    elements.eventIdInput.value = '';
+    elements.eventTitleInput.value = '';
+    elements.eventDateInput.value = dateStr || new Date().toISOString().split('T')[0];
+    elements.eventPeriodInput.value = '';
+    elements.eventClassInput.value = '';
+    elements.eventDescriptionInput.value = '';
+    elements.eventCustomTagsInput.value = '';
+    selectedPSEDIndicators = [];
+
+    // Reset tag styling
+    elements.eventPSEDTags?.querySelectorAll('.psed-tag').forEach(tag => tag.classList.remove('selected'));
+
+    elements.eventModalTitle.textContent = 'Add Event';
+    elements.deleteEventBtn?.classList.add('d-none');
+
+    const modal = new bootstrap.Modal(elements.eventModal);
+    modal.show();
+}
+
+// Edit existing event
+function editEvent(eventId) {
+    const event = teacherEvents.find(e => e.id === eventId);
+    if (!event || !elements.eventModal) return;
+
+    elements.eventIdInput.value = event.id;
+    elements.eventTitleInput.value = event.title || '';
+    elements.eventDateInput.value = event.date || '';
+    elements.eventPeriodInput.value = event.period || '';
+    elements.eventClassInput.value = event.className || '';
+    elements.eventDescriptionInput.value = event.description || '';
+    elements.eventCustomTagsInput.value = event.customTags?.join(', ') || '';
+
+    // Set PSED tags
+    selectedPSEDIndicators = event.psedTags || [];
+    elements.eventPSEDTags?.querySelectorAll('.psed-tag').forEach(tag => {
+        if (selectedPSEDIndicators.includes(tag.dataset.indicator)) {
+            tag.classList.add('selected');
+        } else {
+            tag.classList.remove('selected');
+        }
+    });
+
+    elements.eventModalTitle.textContent = 'Edit Event';
+    elements.deleteEventBtn?.classList.remove('d-none');
+
+    const modal = new bootstrap.Modal(elements.eventModal);
+    modal.show();
+}
+
+// Save event to Firestore
+async function saveEvent() {
+    if (!currentUser?.email || !teacherSchoolId) {
+        alert('Please wait for data to load');
+        return;
+    }
+
+    const eventData = {
+        title: elements.eventTitleInput?.value?.trim(),
+        date: elements.eventDateInput?.value,
+        period: elements.eventPeriodInput?.value,
+        className: elements.eventClassInput?.value?.trim(),
+        description: elements.eventDescriptionInput?.value?.trim(),
+        psedTags: selectedPSEDIndicators,
+        customTags: elements.eventCustomTagsInput?.value?.split(',').map(t => t.trim()).filter(t => t) || [],
+        teacherEmail: currentUser.email,
+        teacherName: teacherName || extractTeacherNameFromEmail(currentUser.email),
+        schoolId: teacherSchoolId,
+        updatedAt: new Date()
+    };
+
+    if (!eventData.title || !eventData.date) {
+        alert('Please enter title and date');
+        return;
+    }
+
+    try {
+        const eventId = elements.eventIdInput?.value;
+        const eventsRef = firestore.collection('schools')
+            .doc(teacherSchoolId)
+            .collection('teacherEvents');
+
+        if (eventId) {
+            // Update existing
+            await eventsRef.doc(eventId).update(eventData);
+        } else {
+            // Create new
+            eventData.createdAt = new Date();
+            await eventsRef.add(eventData);
+        }
+
+        // Close modal and refresh
+        bootstrap.Modal.getInstance(elements.eventModal)?.hide();
+        await loadTeacherEvents();
+
+        if (currentView === 'calendar') {
+            renderCalendar();
+        }
+    } catch (error) {
+        console.error('Error saving event:', error);
+        alert('Error saving event. Please try again.');
+    }
+}
+
+// Delete event
+async function deleteEvent() {
+    const eventId = elements.eventIdInput?.value;
+    if (!eventId || !teacherSchoolId) return;
+
+    if (!confirm('Are you sure you want to delete this event?')) return;
+
+    try {
+        await firestore.collection('schools')
+            .doc(teacherSchoolId)
+            .collection('teacherEvents')
+            .doc(eventId)
+            .delete();
+
+        bootstrap.Modal.getInstance(elements.eventModal)?.hide();
+        await loadTeacherEvents();
+
+        if (currentView === 'calendar') {
+            renderCalendar();
+        }
+    } catch (error) {
+        console.error('Error deleting event:', error);
+        alert('Error deleting event');
+    }
+}
+
+// Load teacher events from Firestore
+async function loadTeacherEvents() {
+    if (!teacherSchoolId || !currentUser?.email) {
+        console.log('[DEBUG] Cannot load events - missing schoolId or email');
+        return;
+    }
+
+    try {
+        const snapshot = await firestore.collection('schools')
+            .doc(teacherSchoolId)
+            .collection('teacherEvents')
+            .where('teacherEmail', '==', currentUser.email)
+            .get();
+
+        teacherEvents = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        console.log('[DEBUG] Loaded', teacherEvents.length, 'teacher events');
+
+        if (currentView === 'calendar') {
+            renderCalendar();
+        }
+    } catch (error) {
+        console.error('Error loading events:', error);
+    }
+}
+
+// ==================== CALENDAR EVENT LISTENERS ====================
+
+// Initialize PSED tags on page load
+if (elements.eventPSEDTags) {
+    initPSEDTagSelector();
+}
+
+// View toggle buttons
+if (elements.viewTableBtn) {
+    elements.viewTableBtn.addEventListener('click', () => toggleView('table'));
+}
+if (elements.viewCalendarBtn) {
+    elements.viewCalendarBtn.addEventListener('click', () => toggleView('calendar'));
+}
+
+// Add event button
+if (elements.addEventBtn) {
+    elements.addEventBtn.addEventListener('click', () => openEventModal());
+}
+
+// Save/Delete event buttons
+if (elements.saveEventBtn) {
+    elements.saveEventBtn.addEventListener('click', saveEvent);
+}
+if (elements.deleteEventBtn) {
+    elements.deleteEventBtn.addEventListener('click', deleteEvent);
 }

@@ -25,3 +25,29 @@
 .question-sort:hover{color:#16a085}
 #questionsTableView td{vertical-align:top;min-width:120px}
 #questionsTableView td:first-child,#questionsTableView th:first-child{min-width:72px}
+
+/* Calendar Styles */
+.calendar-view{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;min-height:400px}
+.calendar-header{background:#2c3e50;color:white;padding:10px;text-align:center;font-weight:600;border-radius:4px}
+.calendar-day{border:1px solid #dee2e6;border-radius:4px;min-height:100px;padding:5px;background:white;cursor:pointer;transition:background-color 0.2s}
+.calendar-day:hover{background:#f8f9fa}
+.calendar-day.other-month{background:#f8f9fa;color:#adb5bd}
+.calendar-day.today{background:#e8f5f1;border-color:#16a085}
+.calendar-day-number{font-weight:600;margin-bottom:4px;font-size:0.9rem}
+.calendar-event{font-size:0.75rem;padding:2px 4px;border-radius:3px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calendar-event.event-past{background:#d1ecf1;color:#0c5460}
+.calendar-event.event-upcoming{background:#d4edda;color:#155724}
+.calendar-event.event-today{background:#fff3cd;color:#856404;font-weight:500}
+.calendar-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}
+.calendar-month-year{font-size:1.25rem;font-weight:600;color:#2c3e50}
+
+/* PSED Tag Styles */
+.psed-tag{display:inline-block;padding:4px 8px;border-radius:12px;font-size:0.75rem;cursor:pointer;border:2px solid transparent;transition:all 0.2s}
+.psed-tag:hover{opacity:0.8}
+.psed-tag.selected{border-color:#2c3e50;box-shadow:0 0 0 2px rgba(44,62,80,0.3)}
+.psed-tag-personal{background:#d1ecf1;color:#0c5460}
+.psed-tag-social{background:#d4edda;color:#155724}
+.psed-tag-emotional{background:#f8d7da;color:#721c24}
+.psed-tag-lifeskills{background:#fff3cd;color:#856404}
+.event-tag{display:inline-block;font-size:0.7rem;padding:1px 4px;border-radius:3px;margin-right:2px}
+.calendar-empty-state{grid-column:1/-1;text-align:center;padding:40px;color:#6c757d}

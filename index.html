@@ -73,6 +73,17 @@
                             <option value="2025-26">2025-26</option>
                             <option value="2026-27">2026-27</option>
                         </select>
+                        <div class="btn-group" role="group">
+                            <button id="view-table" class="btn btn-sm btn-outline-light active">
+                                <i class="bi bi-table me-1"></i>Table
+                            </button>
+                            <button id="view-calendar" class="btn btn-sm btn-outline-light">
+                                <i class="bi bi-calendar3 me-1"></i>Calendar
+                            </button>
+                        </div>
+                        <button id="add-event-btn" class="btn btn-sm btn-success d-none">
+                            <i class="bi bi-plus-lg me-1"></i>Event
+                        </button>
                         <button id="refresh-timetable" class="btn btn-sm btn-outline-light">
                             <i class="bi bi-arrow-clockwise"></i>
                         </button>
@@ -82,6 +93,71 @@
                     <div id="timetable-container">
                         <div class="text-center text-muted py-3">
                             <i class="bi bi-info-circle me-2"></i>Select an academic year to view your timetable
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Event Modal -->
+            <div class="modal fade" id="eventModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title"><i class="bi bi-calendar-event me-2"></i><span id="event-modal-title">Add Event</span></h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="event-id">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Event Title</label>
+                                <input type="text" id="event-title" class="form-control" placeholder="Enter event title">
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">Date</label>
+                                    <input type="date" id="event-date" class="form-control">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">Period</label>
+                                    <select id="event-period" class="form-select">
+                                        <option value="">Select Period</option>
+                                        <option value="P1">P1</option>
+                                        <option value="P2">P2</option>
+                                        <option value="P3">P3</option>
+                                        <option value="P4">P4</option>
+                                        <option value="P5">P5</option>
+                                        <option value="P6">P6</option>
+                                        <option value="P7">P7</option>
+                                        <option value="P8">P8</option>
+                                        <option value="P9">P9</option>
+                                        <option value="P10">P10</option>
+                                        <option value="all">All Day</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Class/Subject (Optional)</label>
+                                <input type="text" id="event-class" class="form-control" placeholder="e.g., Grade I-A, Mathematics">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Description</label>
+                                <textarea id="event-description" class="form-control" rows="2" placeholder="Event details..."></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">PSED Indicator Tags</label>
+                                <div id="event-psed-tags" class="d-flex flex-wrap gap-2">
+                                    <!-- PSED tags populated dynamically -->
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Custom Tags</label>
+                                <input type="text" id="event-custom-tags" class="form-control" placeholder="Add tags separated by commas (e.g., exam, meeting, project)">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" id="delete-event-btn" class="btn btn-danger me-auto d-none">Delete</button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" id="save-event-btn" class="btn btn-primary">Save Event</button>
                         </div>
                     </div>
                 </div>
