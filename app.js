@@ -31,6 +31,9 @@ let currentUser = null;
 let currentSectionId = null;
 let currentSectionName = '';
 let availableSections = [];
+let teacherSchoolId = null;
+let teacherName = null;
+let timetableData = null;
 
 // DOM elements
 const elements = {
@@ -46,10 +49,17 @@ const elements = {
     testsContainer: document.getElementById('tests-container'),
     refreshTests: document.getElementById('refresh-tests'),
     viewStudentsBtn: document.getElementById('view-students-btn'),
-    studentsTableBody: document.getElementById('studentsTableBody')
+    studentsTableBody: document.getElementById('studentsTableBody'),
+    timetableSection: document.getElementById('timetable-section'),
+    timetableYearSelect: document.getElementById('timetable-year-select'),
+    timetableContainer: document.getElementById('timetable-container'),
+    refreshTimetable: document.getElementById('refresh-timetable')
 };
 
 let studentsDataTable = null;
+
+// Day order for timetable display
+const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 // Authentication state listener
 auth.onAuthStateChanged(async (user) => {
@@ -82,6 +92,7 @@ elements.signoutBtn.onclick = () => auth.signOut();
 // Initialize app after authentication
 async function initializeApp() {
     await loadAssignedSections();
+    await initializeTimetable();
     if (currentSectionId) {
         await loadTests();
     }
@@ -356,4 +367,279 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+// Extract teacher name from email (e.g., "john.doe@school.com" -> "John Doe")
+function extractTeacherNameFromEmail(email) {
+    console.log('[DEBUG] extractTeacherNameFromEmail() called with:', email);
+    if (!email) {
+        console.log('[DEBUG] No email provided, returning null');
+        return null;
+    }
+    const localPart = email.split('@')[0];
+    console.log('[DEBUG] Local part of email:', localPart);
+    // Handle formats like "john.doe", "john_doe", "johndoe", "john.doe123"
+    const nameParts = localPart.split(/[._]/).filter(part => isNaN(part) && part.length > 1);
+    console.log('[DEBUG] Name parts extracted:', nameParts);
+    if (nameParts.length === 0) {
+        console.log('[DEBUG] No valid name parts, returning localPart:', localPart);
+        return localPart;
+    }
+    const result = nameParts.map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(' ');
+    console.log('[DEBUG] Final extracted name:', result);
+    return result;
+}
+
+// Load teacher info from assignments (schoolId and teacherName)
+async function loadTeacherInfo() {
+    console.log('[DEBUG] loadTeacherInfo() called, currentUser.email:', currentUser?.email);
+    try {
+        const snapshot = await firestore.collection('teacherAssignments')
+            .where('teacherEmail', '==', currentUser.email)
+            .get();
+
+        console.log('[DEBUG] teacherAssignments query returned', snapshot.size, 'documents');
+        snapshot.docs.forEach((doc, i) => {
+            console.log(`[DEBUG] Assignment ${i}:`, doc.id, doc.data());
+        });
+
+        if (snapshot.empty) {
+            console.log('[DEBUG] No teacher assignments found');
+            return false;
+        }
+
+        const assignment = snapshot.docs[0].data();
+        console.log('[DEBUG] Using assignment:', assignment);
+        teacherSchoolId = assignment.schoolId || null;
+        teacherName = assignment.teacherName || extractTeacherNameFromEmail(currentUser.email);
+        console.log('[DEBUG] teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
+
+        // Show timetable section if we have school info
+        console.log('[DEBUG] teacherSchoolId present?', !!teacherSchoolId, 'timetableSection exists?', !!elements.timetableSection);
+        if (teacherSchoolId && elements.timetableSection) {
+            elements.timetableSection.classList.remove('d-none');
+            console.log('[DEBUG] Timetable section made visible');
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error loading teacher info:', error);
+        return false;
+    }
+}
+
+// Load teacher's timetable from Firestore
+async function loadTeacherTimetable() {
+    console.log('[DEBUG] loadTeacherTimetable() called');
+    const academicYear = elements.timetableYearSelect?.value;
+    console.log('[DEBUG] Selected academic year:', academicYear);
+    if (!academicYear) {
+        elements.timetableContainer.innerHTML = `
+            <div class="text-center text-muted py-3">
+                <i class="bi bi-info-circle me-2"></i>Select an academic year to view your timetable
+            </div>
+        `;
+        return;
+    }
+
+    if (!teacherSchoolId) {
+        console.log('[DEBUG] teacherSchoolId missing, calling loadTeacherInfo()');
+        await loadTeacherInfo();
+    }
+
+    console.log('[DEBUG] After loadTeacherInfo, teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
+
+    if (!teacherSchoolId) {
+        elements.timetableContainer.innerHTML = `
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                No school assigned. Please contact your administrator.
+            </div>
+        `;
+        return;
+    }
+
+    if (!teacherName) {
+        teacherName = extractTeacherNameFromEmail(currentUser.email);
+    }
+
+    elements.timetableContainer.innerHTML = `
+        <div class="text-center py-3">
+            <div class="spinner-border text-primary"></div>
+            <p class="mt-2 text-muted">Loading timetable...</p>
+        </div>
+    `;
+
+    try {
+        const docPath = `timetables/${teacherSchoolId}/years/${academicYear}`;
+        console.log('[DEBUG] Fetching Firestore document at path:', docPath);
+        const doc = await firestore.collection('timetables')
+            .doc(teacherSchoolId)
+            .collection('years')
+            .doc(academicYear)
+            .get();
+        console.log('[DEBUG] Firestore document exists?', doc.exists);
+
+        if (!doc.exists) {
+            console.log('[DEBUG] Timetable document does not exist for:', academicYear, 'schoolId:', teacherSchoolId);
+            elements.timetableContainer.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    No timetable found for ${academicYear}.
+                </div>
+            `;
+            return;
+        }
+
+        const data = doc.data();
+        console.log('[DEBUG] Timetable data keys:', Object.keys(data || {}));
+        console.log('[DEBUG] timetableData present?', !!data.timetableData);
+        if (data.timetableData) {
+            console.log('[DEBUG] Number of classes in timetable:', Object.keys(data.timetableData).length);
+        }
+        timetableData = data.timetableData || {};
+
+        renderTeacherTimetable();
+    } catch (error) {
+        console.error('Error loading timetable:', error);
+        elements.timetableContainer.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-circle me-2"></i>
+                Error loading timetable. Please try again.
+            </div>
+        `;
+    }
+}
+
+// Render teacher's timetable
+function renderTeacherTimetable() {
+    console.log('[DEBUG] renderTeacherTimetable() called');
+    console.log('[DEBUG] timetableData available?', !!timetableData, 'teacherName:', teacherName);
+    if (!timetableData || !teacherName) {
+        console.log('[DEBUG] Missing data - timetableData:', timetableData, 'teacherName:', teacherName);
+        return;
+    }
+
+    // Extract teacher's schedule from all classes
+    const teacherSchedule = {};
+    let hasData = false;
+
+    Object.values(timetableData).forEach((classData, classIndex) => {
+        if (!classData || !classData.days) {
+            console.log('[DEBUG] Class', classIndex, 'has no days data');
+            return;
+        }
+
+        classData.days.forEach((day, dayIndex) => {
+            if (!day || !day.periods) {
+                console.log('[DEBUG] Day', dayIndex, 'in class', classData.className, 'has no periods');
+                return;
+            }
+
+            const dayName = day.dayName;
+            if (!teacherSchedule[dayName]) {
+                teacherSchedule[dayName] = [];
+            }
+
+            day.periods.forEach(period => {
+                const match = period.teacherName && period.teacherName.toLowerCase() === teacherName.toLowerCase();
+                if (match) {
+                    console.log('[DEBUG] Found matching period:', period, 'in class:', classData.className, 'day:', dayName);
+                    teacherSchedule[dayName].push({
+                        period: period.period,
+                        time: period.time || `P${period.period}`,
+                        subject: period.subject || '',
+                        className: classData.className,
+                        type: period.type || 'Regular'
+                    });
+                    hasData = true;
+                }
+            });
+        });
+    });
+
+    console.log('[DEBUG] hasData:', hasData, 'teacherSchedule keys:', Object.keys(teacherSchedule));
+    if (!hasData) {
+        console.log('[DEBUG] No matching classes found for teacher:', teacherName);
+        elements.timetableContainer.innerHTML = `
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                No classes found for <strong>${escapeHtml(teacherName)}</strong> in this timetable.
+            </div>
+        `;
+        return;
+    }
+
+    // Build timetable HTML
+    let html = `
+        <div class="table-responsive">
+            <table class="table table-bordered table-sm">
+                <thead class="table-dark">
+                    <tr>
+                        <th style="min-width: 100px;">Day</th>
+                        <th style="min-width: 80px;">Period</th>
+                        <th style="min-width: 100px;">Time</th>
+                        <th>Class</th>
+                        <th>Subject</th>
+                        <th>Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    // Sort days by standard order
+    const sortedDays = Object.keys(teacherSchedule).sort((a, b) => {
+        const indexA = dayOrder.indexOf(a);
+        const indexB = dayOrder.indexOf(b);
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+
+    sortedDays.forEach(day => {
+        const periods = teacherSchedule[day];
+        // Sort by period number
+        periods.sort((a, b) => {
+            const numA = parseInt(a.period) || 0;
+            const numB = parseInt(b.period) || 0;
+            return numA - numB;
+        });
+
+        // Use rowspan for day column
+        periods.forEach((period, index) => {
+            html += '<tr>';
+            if (index === 0) {
+                html += `<td rowspan="${periods.length}" class="fw-semibold" style="vertical-align: middle; background: #f8f9fa;">${escapeHtml(day)}</td>`;
+            }
+            html += `
+                <td class="text-center">${escapeHtml(String(period.period))}</td>
+                <td>${escapeHtml(period.time)}</td>
+                <td>${escapeHtml(period.className)}</td>
+                <td>${escapeHtml(period.subject)}</td>
+                <td><span class="badge bg-${period.type === 'Break' ? 'secondary' : 'info'}">${escapeHtml(period.type)}</span></td>
+            </tr>`;
+        });
+    });
+
+    html += '</tbody></table></div>';
+    html += `
+        <div class="mt-2 text-muted small">
+            <i class="bi bi-person-check me-2"></i>Showing schedule for: <strong>${escapeHtml(teacherName)}</strong>
+        </div>
+    `;
+
+    elements.timetableContainer.innerHTML = html;
+}
+
+// Initialize timetable after app loads
+async function initializeTimetable() {
+    await loadTeacherInfo();
+}
+
+// Timetable event listeners
+if (elements.timetableYearSelect) {
+    elements.timetableYearSelect.addEventListener('change', loadTeacherTimetable);
+}
+if (elements.refreshTimetable) {
+    elements.refreshTimetable.addEventListener('click', loadTeacherTimetable);
 }
