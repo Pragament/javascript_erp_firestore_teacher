@@ -105,13 +105,15 @@ function normalizeAssignedSections(snapshot) {
         const assignment = doc.data() || {};
         const sectionIds = Array.isArray(assignment.sectionIds) ? assignment.sectionIds : [];
         const sectionNames = Array.isArray(assignment.sectionNames) ? assignment.sectionNames : [];
+        const schoolId = assignment.schoolId || null;
 
         if (sectionIds.length > 0) {
             sectionIds.forEach((sectionId, index) => {
                 if (!sectionId || sectionsMap.has(sectionId)) return;
                 sectionsMap.set(sectionId, {
                     id: sectionId,
-                    name: sectionNames[index] || assignment.sectionName || sectionId
+                    name: sectionNames[index] || assignment.sectionName || sectionId,
+                    schoolId: schoolId
                 });
             });
         }
@@ -119,7 +121,8 @@ function normalizeAssignedSections(snapshot) {
         if (assignment.sectionId && !sectionsMap.has(assignment.sectionId)) {
             sectionsMap.set(assignment.sectionId, {
                 id: assignment.sectionId,
-                name: assignment.sectionName || assignment.sectionId
+                name: assignment.sectionName || assignment.sectionId,
+                schoolId: schoolId
             });
         }
     });
@@ -184,6 +187,7 @@ async function loadAssignedSections() {
         }
 
         availableSections = normalizeAssignedSections(snapshot);
+        console.log('[DEBUG] availableSections after normalize:', availableSections);
         setCurrentSection(currentSectionId || availableSections[0]?.id || null);
         renderSectionSwitcher();
     } catch (error) {
@@ -393,6 +397,20 @@ function extractTeacherNameFromEmail(email) {
 // Load teacher info from assignments (schoolId and teacherName)
 async function loadTeacherInfo() {
     console.log('[DEBUG] loadTeacherInfo() called, currentUser.email:', currentUser?.email);
+    
+    // First check if we can get schoolId from the selected section
+    const selectedSectionId = elements.sectionSelect?.value;
+    console.log('[DEBUG] Selected section ID from dropdown:', selectedSectionId);
+    
+    if (selectedSectionId) {
+        const selectedSection = availableSections.find(s => s.id === selectedSectionId);
+        console.log('[DEBUG] Found selected section:', selectedSection);
+        if (selectedSection && selectedSection.schoolId) {
+            teacherSchoolId = selectedSection.schoolId;
+            console.log('[DEBUG] Using schoolId from selected section:', teacherSchoolId);
+        }
+    }
+    
     try {
         const snapshot = await firestore.collection('teacherAssignments')
             .where('teacherEmail', '==', currentUser.email)
@@ -410,9 +428,15 @@ async function loadTeacherInfo() {
 
         const assignment = snapshot.docs[0].data();
         console.log('[DEBUG] Using assignment:', assignment);
-        teacherSchoolId = assignment.schoolId || null;
+        
+        // Use schoolId from section if available, otherwise fallback to assignment
+        if (!teacherSchoolId) {
+            teacherSchoolId = assignment.schoolId || null;
+            console.log('[DEBUG] Using schoolId from assignment:', teacherSchoolId);
+        }
+        
         teacherName = assignment.teacherName || extractTeacherNameFromEmail(currentUser.email);
-        console.log('[DEBUG] teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
+        console.log('[DEBUG] Final teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
 
         // Show timetable section if we have school info
         console.log('[DEBUG] teacherSchoolId present?', !!teacherSchoolId, 'timetableSection exists?', !!elements.timetableSection);
@@ -431,6 +455,10 @@ async function loadTeacherInfo() {
 // Load teacher's timetable from Firestore
 async function loadTeacherTimetable() {
     console.log('[DEBUG] loadTeacherTimetable() called');
+    
+    // Always refresh schoolId from currently selected section (user may have changed sections)
+    refreshTeacherSchoolId();
+    
     const academicYear = elements.timetableYearSelect?.value;
     console.log('[DEBUG] Selected academic year:', academicYear);
     if (!academicYear) {
@@ -442,12 +470,20 @@ async function loadTeacherTimetable() {
         return;
     }
 
+    // If still no schoolId, try loading from teacherAssignments
     if (!teacherSchoolId) {
-        console.log('[DEBUG] teacherSchoolId missing, calling loadTeacherInfo()');
+        console.log('[DEBUG] teacherSchoolId still missing, calling loadTeacherInfo()');
         await loadTeacherInfo();
     }
 
-    console.log('[DEBUG] After loadTeacherInfo, teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
+    console.log('[DEBUG] Final teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
+    
+    // Fetch teacherId (teacherCode) from schools collection
+    let teacherId = null;
+    if (teacherSchoolId) {
+        teacherId = await fetchTeacherIdFromSchool();
+        console.log('[DEBUG] teacherId fetched from school:', teacherId);
+    }
 
     if (!teacherSchoolId) {
         elements.timetableContainer.innerHTML = `
@@ -459,9 +495,10 @@ async function loadTeacherTimetable() {
         return;
     }
 
-    if (!teacherName) {
-        teacherName = extractTeacherNameFromEmail(currentUser.email);
-    }
+    // Use teacherId if available, otherwise fall back to teacherName
+    const teacherIdentifier = teacherId || teacherName || extractTeacherNameFromEmail(currentUser.email);
+    const useTeacherId = !!teacherId;
+    console.log('[DEBUG] Using teacherIdentifier:', teacherIdentifier, 'useTeacherId:', useTeacherId);
 
     elements.timetableContainer.innerHTML = `
         <div class="text-center py-3">
@@ -499,7 +536,8 @@ async function loadTeacherTimetable() {
         }
         timetableData = data.timetableData || {};
 
-        renderTeacherTimetable();
+        // Pass teacherId and useTeacherId flag to render function
+        renderTeacherTimetable(teacherIdentifier, useTeacherId);
     } catch (error) {
         console.error('Error loading timetable:', error);
         elements.timetableContainer.innerHTML = `
@@ -512,11 +550,11 @@ async function loadTeacherTimetable() {
 }
 
 // Render teacher's timetable
-function renderTeacherTimetable() {
-    console.log('[DEBUG] renderTeacherTimetable() called');
-    console.log('[DEBUG] timetableData available?', !!timetableData, 'teacherName:', teacherName);
-    if (!timetableData || !teacherName) {
-        console.log('[DEBUG] Missing data - timetableData:', timetableData, 'teacherName:', teacherName);
+function renderTeacherTimetable(teacherIdentifier, useTeacherId = false) {
+    console.log('[DEBUG] renderTeacherTimetable() called with teacherIdentifier:', teacherIdentifier, 'useTeacherId:', useTeacherId);
+    console.log('[DEBUG] timetableData available?', !!timetableData);
+    if (!timetableData || !teacherIdentifier) {
+        console.log('[DEBUG] Missing data - timetableData:', timetableData, 'teacherIdentifier:', teacherIdentifier);
         return;
     }
 
@@ -542,9 +580,16 @@ function renderTeacherTimetable() {
             }
 
             day.periods.forEach(period => {
-                const match = period.teacherName && period.teacherName.toLowerCase() === teacherName.toLowerCase();
+                let match = false;
+                if (useTeacherId && period.teacherId) {
+                    // Match by teacherId (teacherCode)
+                    match = period.teacherId.toLowerCase() === teacherIdentifier.toLowerCase();
+                } else {
+                    // Match by teacherName (fallback)
+                    match = period.teacherName && period.teacherName.toLowerCase() === teacherIdentifier.toLowerCase();
+                }
                 if (match) {
-                    console.log('[DEBUG] Found matching period:', period, 'in class:', classData.className, 'day:', dayName);
+                    console.log('[DEBUG] Found matching period:', period, 'in class:', classData.className, 'day:', dayName, 'useTeacherId:', useTeacherId);
                     teacherSchedule[dayName].push({
                         period: period.period,
                         time: period.time || `P${period.period}`,
@@ -560,11 +605,11 @@ function renderTeacherTimetable() {
 
     console.log('[DEBUG] hasData:', hasData, 'teacherSchedule keys:', Object.keys(teacherSchedule));
     if (!hasData) {
-        console.log('[DEBUG] No matching classes found for teacher:', teacherName);
+        console.log('[DEBUG] No matching classes found for teacherIdentifier:', teacherIdentifier);
         elements.timetableContainer.innerHTML = `
             <div class="alert alert-info">
                 <i class="bi bi-info-circle me-2"></i>
-                No classes found for <strong>${escapeHtml(teacherName)}</strong> in this timetable.
+                No classes found for <strong>${escapeHtml(teacherIdentifier)}</strong> in this timetable.
             </div>
         `;
         return;
@@ -624,7 +669,7 @@ function renderTeacherTimetable() {
     html += '</tbody></table></div>';
     html += `
         <div class="mt-2 text-muted small">
-            <i class="bi bi-person-check me-2"></i>Showing schedule for: <strong>${escapeHtml(teacherName)}</strong>
+            <i class="bi bi-person-check me-2"></i>Showing schedule for: <strong>${escapeHtml(teacherIdentifier)}</strong> (${useTeacherId ? 'by Teacher ID' : 'by Name'})
         </div>
     `;
 
@@ -636,10 +681,70 @@ async function initializeTimetable() {
     await loadTeacherInfo();
 }
 
+// Refresh schoolId from currently selected section (call when user changes section or clicks refresh)
+function refreshTeacherSchoolId() {
+    console.log('[DEBUG] refreshTeacherSchoolId() called');
+    const selectedSectionId = elements.sectionSelect?.value;
+    console.log('[DEBUG] Current selected section ID:', selectedSectionId);
+    
+    if (selectedSectionId) {
+        const selectedSection = availableSections.find(s => s.id === selectedSectionId);
+        console.log('[DEBUG] Found section for schoolId refresh:', selectedSection);
+        if (selectedSection && selectedSection.schoolId) {
+            teacherSchoolId = selectedSection.schoolId;
+            console.log('[DEBUG] Refreshed teacherSchoolId from selected section:', teacherSchoolId);
+            return true;
+        }
+    }
+    console.log('[DEBUG] Could not refresh schoolId from selected section');
+    return false;
+}
+
+// Fetch teacherId (teacherCode) from schools/{schoolId}/teachers collection
+async function fetchTeacherIdFromSchool() {
+    console.log('[DEBUG] fetchTeacherIdFromSchool() called, teacherSchoolId:', teacherSchoolId, 'currentUser.email:', currentUser?.email);
+    if (!teacherSchoolId || !currentUser?.email) {
+        console.log('[DEBUG] Missing schoolId or email, cannot fetch teacherId');
+        return null;
+    }
+    
+    try {
+        // Query teachers collection by email
+        const snapshot = await firestore.collection('schools')
+            .doc(teacherSchoolId)
+            .collection('teachers')
+            .where('email', '==', currentUser.email)
+            .get();
+        
+        console.log('[DEBUG] Teachers query returned', snapshot.size, 'documents');
+        snapshot.docs.forEach((doc, i) => {
+            console.log(`[DEBUG] Teacher ${i}:`, doc.id, doc.data());
+        });
+        
+        if (snapshot.empty) {
+            console.log('[DEBUG] No teacher found with email:', currentUser.email);
+            return null;
+        }
+        
+        const teacherData = snapshot.docs[0].data();
+        const teacherCode = teacherData.teacherCode || teacherData.teacherId || null;
+        console.log('[DEBUG] Found teacherCode:', teacherCode, 'from teacher:', teacherData);
+        return teacherCode;
+    } catch (error) {
+        console.error('[DEBUG] Error fetching teacherId from school:', error);
+        return null;
+    }
+}
+
 // Timetable event listeners
 if (elements.timetableYearSelect) {
     elements.timetableYearSelect.addEventListener('change', loadTeacherTimetable);
 }
 if (elements.refreshTimetable) {
-    elements.refreshTimetable.addEventListener('click', loadTeacherTimetable);
+    elements.refreshTimetable.addEventListener('click', () => {
+        console.log('[DEBUG] Refresh timetable button clicked');
+        // Clear cached schoolId to force refresh from selected section
+        teacherSchoolId = null;
+        loadTeacherTimetable();
+    });
 }
