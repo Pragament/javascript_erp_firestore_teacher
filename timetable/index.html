@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School Timetable Manager</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark shadow-sm" style="background: #2c3e50;">
+        <div class="container-fluid">
+            <span class="navbar-brand fw-bold">
+                <i class="bi bi-building me-2"></i>School Admin
+            </span>
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <select id="nav-school-select" class="form-select form-select-sm" style="width: auto; min-width: 150px;">
+                    <option value="">Select School</option>
+                </select>
+                <select id="nav-year-select" class="form-select form-select-sm" style="width: auto; min-width: 120px;">
+                    <option value="">Select Year</option>
+                    <option value="2024-25">2024-25</option>
+                    <option value="2025-26">2025-26</option>
+                    <option value="2026-27">2026-27</option>
+                    <option value="2027-28">2027-28</option>
+                </select>
+                <div id="syncStatus" class="sync-status text-white small me-2">
+                    <span id="syncStatusText"><i class="bi bi-circle-notch bi-spin"></i> Checking...</span>
+                </div>
+                <button id="pushToFirestoreBtn" class="btn btn-success btn-sm" style="display: none;">
+                    <i class="bi bi-cloud-upload"></i> Push
+                </button>
+                <button id="copyYearBtn" class="btn btn-info btn-sm text-white" title="Copy timetable to another year">
+                    <i class="bi bi-copy"></i> Copy Year
+                </button>
+                <a href="../management.html" class="btn btn-outline-info btn-sm" title="School Management">
+                    <i class="bi bi-gear"></i> Manage
+                </a>
+                <a href="../help.html" class="btn btn-outline-warning btn-sm" title="Help & Guide">
+                    <i class="bi bi-question-circle"></i>
+                </a>
+                <a href="../index.html" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-arrow-left"></i> Dashboard
+                </a>
+                <span class="text-white d-none d-md-inline" id="user-email"></span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid py-3">
+        
+        <div class="tabs">
+            <div class="tab active" data-target="holidays-section">
+                <i class="fas fa-umbrella-beach"></i> Holidays
+            </div>
+            <div class="tab" data-target="view-timetable-section">
+                <i class="fas fa-calendar-day"></i> View Timetable
+            </div>
+            <div class="tab" data-target="upload-timetable-section">
+                <i class="fas fa-file-upload"></i> Upload Timetable
+            </div>
+            <div class="tab" data-target="modify-timetable-section">
+                <i class="fas fa-edit"></i> Modify Timetable
+            </div>
+            <div class="tab" data-target="teacher-schedule-section">
+                <i class="fas fa-chalkboard-teacher"></i> Teacher Schedule
+            </div>
+        </div>
+        
+        <!-- Holidays Section -->
+        <div class="content-section active" id="holidays-section">
+            <div class="section-header">
+                <h2><i class="fas fa-umbrella-beach"></i> Holiday Management</h2>
+                <div class="section-actions">
+                    <select id="yearSelect" class="form-control" style="width: auto;">
+                        <option value="2026">Academic Year 2026</option>
+                        <option value="2025">Academic Year 2025</option>
+                        <option value="2024">Academic Year 2024</option>
+                    </select>
+                    <button class="btn btn-primary" id="addHolidayBtn">
+                        <i class="fas fa-plus"></i> Add Holiday
+                    </button>
+                    <button class="btn btn-success" id="exportHolidaysBtn">
+                        <i class="fas fa-file-export"></i> Export
+                    </button>
+                </div>
+            </div>
+            
+            <div class="data-summary">
+                <div class="summary-card">
+                    <h3>Total Holidays</h3>
+                    <div class="value" id="totalHolidays">0</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Public Holidays</h3>
+                    <div class="value" id="publicHolidays">0</div>
+                </div>
+                <div class="summary-card">
+                    <h3>School Holidays</h3>
+                    <div class="value" id="schoolHolidays">0</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Optional Holidays</h3>
+                    <div class="value" id="optionalHolidays">0</div>
+                </div>
+            </div>
+            
+            <div id="holidaysList">
+                <div class="empty-state">
+                    <i class="fas fa-umbrella-beach"></i>
+                    <h3>No Holidays Added Yet</h3>
+                    <p>Start by adding your first holiday. You can add public holidays, school holidays, or optional holidays.</p>
+                    <button class="btn btn-primary" id="addFirstHolidayBtn">
+                        <i class="fas fa-plus"></i> Add First Holiday
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- View Timetable Section -->
+        <div class="content-section" id="view-timetable-section">
+            <div class="section-header">
+                <h2><i class="fas fa-calendar-day"></i> View Timetable</h2>
+                <div class="section-actions">
+                    <button class="btn btn-success" id="exportTimetableBtn">
+                        <i class="fas fa-file-export"></i> Export Timetable
+                    </button>
+                </div>
+            </div>
+            
+            <div class="view-selector">
+                <div class="view-option active" data-view="class">Class-wise</div>
+                <div class="view-option" data-view="teacher">Teacher-wise</div>
+                <div class="view-option" data-view="subject">Subject-wise</div>
+            </div>
+            
+            <div class="filter-controls">
+                <select id="classFilter" class="form-control" multiple size="3" title="Select one or more classes">
+                    <option value="Grade-I-A">Grade I-A</option>
+                    <option value="Grade-I-B">Grade I-B</option>
+                    <option value="Grade-II-A">Grade II-A</option>
+                    <option value="Grade-II-B">Grade II-B</option>
+                </select>
+                <select id="teacherFilter" class="form-control" style="display: none;" multiple size="3" title="Select one or more teachers">
+                    <option value="Indira">Indira</option>
+                    <option value="Sai Priya">Sai Priya</option>
+                    <option value="Uma Rani">Uma Rani</option>
+                </select>
+                <select id="subjectFilter" class="form-control" style="display: none;" multiple size="3" title="Select one or more subjects">
+                    <option value="MATHS">Mathematics</option>
+                    <option value="ENGLISH">English</option>
+                    <option value="EVS">EVS</option>
+                    <option value="Hindi">Hindi</option>
+                </select>
+                <button class="btn btn-primary" id="applyFilterBtn">
+                    <i class="fas fa-filter"></i> Apply Filter
+                </button>
+                <button class="btn btn-secondary" id="checkOverlapsBtn">
+                    <i class="fas fa-search"></i> Check Overlaps
+                </button>
+                <button class="btn btn-info" id="checkMappingsBtn">
+                    <i class="fas fa-link"></i> Check Mappings
+                </button>
+                <button class="btn btn-danger" id="exportOverlapsBtn">
+                    <i class="fas fa-file-csv"></i> Export Overlaps CSV
+                </button>
+            </div>
+            <div class="overlap-progress" id="overlapProgress" style="display: none;">
+                <div class="overlap-progress-label" id="overlapProgressLabel">Checking overlaps...</div>
+                <div class="overlap-progress-track">
+                    <div class="overlap-progress-bar" id="overlapProgressBar"></div>
+                </div>
+            </div>
+            
+            <div class="timetable-container">
+                <div id="timetableDisplay">
+                    <div class="empty-state">
+                        <i class="fas fa-calendar-alt"></i>
+                        <h3>No Timetable Loaded</h3>
+                        <p>Upload a timetable using the "Upload Timetable" tab to view it here.</p>
+                        <button class="btn btn-primary" id="goToUploadBtn">
+                            <i class="fas fa-file-upload"></i> Go to Upload
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Upload Timetable Section -->
+        <div class="content-section" id="upload-timetable-section">
+            <div class="section-header">
+                <h2><i class="fas fa-file-upload"></i> Upload Timetable</h2>
+                <div class="section-actions">
+                    <button class="btn btn-success" id="downloadTemplateBtn">
+                        <i class="fas fa-file-download"></i> Download Template
+                    </button>
+                </div>
+            </div>
+            
+            <div class="file-type-selector">
+                <button class="file-type-btn active" data-type="excel">
+                    <i class="fas fa-file-excel"></i> Excel Format
+                </button>
+                <button class="file-type-btn" data-type="csv">
+                    <i class="fas fa-file-csv"></i> CSV Format
+                </button>
+            </div>
+            
+            <div class="upload-area" id="excelUploadArea">
+                <i class="fas fa-file-excel"></i>
+                <h3>Upload Excel Timetable File</h3>
+                <p>Upload an Excel file in one of the supported formats.</p>
+                <div class="form-group" style="max-width: 420px; margin: 15px auto;">
+                    <label for="excelFormatSelect">Excel Format</label>
+                    <select id="excelFormatSelect" class="form-control">
+                        <option value="legacy">Standard (Sheet-per-Class)</option>
+                        <option value="teacher_wise">teacher-wise</option>
+                    </select>
+                </div>
+                <input type="file" id="excelFileInput" accept=".xlsx, .xls">
+                <label for="excelFileInput">Choose Excel File</label>
+                <p id="selectedExcelFileName" style="margin-top: 15px; font-style: italic;"></p>
+            </div>
+            
+            <div class="upload-area" id="csvUploadArea" style="display: none;">
+                <i class="fas fa-file-csv"></i>
+                <h3>Upload CSV Timetable File</h3>
+                <p>Required columns: <code>Class-Section,Day,P1,P2,P3,P4,P5,P6,P7,P8,P9,P10</code></p>
+                <p>Each period cell must be: <code>TeacherID:TeacherName:Subject</code></p>
+                <p>Rules: use <code>-</code> in Class-Section (example <code>Grade-I-A</code>), and <code>:</code> between TeacherID, TeacherName, and Subject.</p>
+                <input type="file" id="csvFileInput" accept=".csv, .txt">
+                <label for="csvFileInput">Choose CSV File</label>
+                <p id="selectedCSVFileName" style="margin-top: 15px; font-style: italic;"></p>
+            </div>
+            
+            <div class="upload-area" id="subjectMappingUploadArea">
+                <i class="fas fa-link"></i>
+                <h3>Upload Subject Mapping CSV</h3>
+                <p>Columns: <code>Teacher Name,Teacher ID,Subject</code></p>
+                <p>Missing subjects are auto-filled using teacher mapping during import.</p>
+                <input type="file" id="subjectMappingFileInput" accept=".csv, .txt">
+                <label for="subjectMappingFileInput">Choose Mapping CSV</label>
+                <p id="selectedSubjectMappingFileName" style="margin-top: 15px; font-style: italic;"></p>
+            </div>
+            
+            <div id="uploadStatus" style="display: none;">
+                <div class="summary-card">
+                    <h3>Upload Status</h3>
+                    <div id="uploadDetails"></div>
+                </div>
+            </div>
+            
+            <div id="timetableDataInfo" style="display: none;">
+                <div class="section-header">
+                    <h3><i class="fas fa-info-circle"></i> Uploaded Timetable Data</h3>
+                </div>
+                <div class="data-summary">
+                    <div class="summary-card">
+                        <h3>Classes</h3>
+                        <div class="value" id="classesCount">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Total Periods</h3>
+                        <div class="value" id="periodsCount">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Teachers</h3>
+                        <div class="value" id="teachersCount">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Subjects</h3>
+                        <div class="value" id="subjectsCount">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Modify Timetable Section -->
+        <div class="content-section" id="modify-timetable-section">
+            <div class="section-header">
+                <h2><i class="fas fa-edit"></i> Modify Timetable</h2>
+                <div class="section-actions">
+                    <button class="btn btn-primary" id="rescheduleModeBtn">
+                        <i class="fas fa-exchange-alt"></i> Reschedule Mode
+                    </button>
+                </div>
+            </div>
+            
+            <div class="reschedule-controls" id="rescheduleControls" style="display: none;">
+                <div>Reschedule Mode: Select two periods to swap</div>
+                <button class="btn btn-success" id="confirmSwapBtn">
+                    <i class="fas fa-check"></i> Confirm Swap
+                </button>
+                <button class="btn btn-danger" id="cancelSwapBtn">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+            </div>
+            
+            <div class="filter-controls">
+                <select id="modifyClassFilter" class="form-control">
+                    <option value="">Select Class</option>
+                    <option value="Grade-I-A">Grade I-A</option>
+                    <option value="Grade-I-B">Grade I-B</option>
+                    <option value="Grade-II-A">Grade II-A</option>
+                    <option value="Grade-II-B">Grade II-B</option>
+                </select>
+                <button class="btn btn-primary" id="loadTimetableBtn">
+                    <i class="fas fa-sync-alt"></i> Load Timetable
+                </button>
+            </div>
+            
+            <div class="timetable-container">
+                <div id="modifyTimetableDisplay">
+                    <div class="empty-state">
+                        <i class="fas fa-edit"></i>
+                        <h3>No Timetable Loaded for Modification</h3>
+                        <p>Select a class and load its timetable to make modifications.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Teacher Schedule Section -->
+        <div class="content-section" id="teacher-schedule-section">
+            <div class="section-header">
+                <h2><i class="fas fa-chalkboard-teacher"></i> Teacher Schedule</h2>
+                <div class="section-actions">
+                    <button class="btn btn-success" id="exportTeacherScheduleBtn">
+                        <i class="fas fa-file-export"></i> Export Schedule
+                    </button>
+                </div>
+            </div>
+            
+            <div class="filter-controls">
+                <select id="teacherScheduleFilter" class="form-control">
+                    <option value="">Select Teacher</option>
+                    <option value="Indira">Indira</option>
+                    <option value="Sai Priya">Sai Priya</option>
+                    <option value="Uma Rani">Uma Rani</option>
+                </select>
+                <button class="btn btn-primary" id="loadTeacherScheduleBtn">
+                    <i class="fas fa-search"></i> Load Schedule
+                </button>
+            </div>
+            
+            <div class="timetable-container">
+                <div id="teacherScheduleDisplay">
+                    <div class="empty-state">
+                        <i class="fas fa-chalkboard-teacher"></i>
+                        <h3>No Teacher Schedule Loaded</h3>
+                        <p>Select a teacher to view their schedule.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>School Timetable Manager &copy; 2026 | For Admin Use Only</p>
+        </footer>
+    </div>
+    
+    <!-- Add Holiday Modal -->
+    <div class="modal" id="addHolidayModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add New Holiday</h3>
+                <button class="close-modal" id="closeHolidayModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="holidayName">Holiday Name</label>
+                    <input type="text" id="holidayName" class="form-control" placeholder="E.g., Independence Day">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="holidayDate">Date</label>
+                        <input type="date" id="holidayDate" class="form-control" value="2026-01-01">
+                    </div>
+                    <div class="form-group">
+                        <label for="holidayType">Type</label>
+                        <select id="holidayType" class="form-control">
+                            <option value="public">Public Holiday</option>
+                            <option value="school">School Holiday</option>
+                            <option value="optional">Optional Holiday</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="holidayDescription">Description (Optional)</label>
+                    <textarea id="holidayDescription" class="form-control" rows="3" placeholder="Add any additional details about this holiday"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="cancelHolidayBtn">Cancel</button>
+                <button class="btn btn-success" id="saveHolidayBtn">Save Holiday</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Time Input Modal for CSV -->
+    <div class="modal" id="timeInputModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Set Period Times</h3>
+                <button class="close-modal" id="closeTimeModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Set P1 start time, choose regular/special periods, define durations, and optional break after each period. Empty timetable cells will still be shown as breaks.</p>
+                <div id="timeInputContainer"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="cancelTimeBtn">Cancel</button>
+                <button class="btn btn-success" id="saveTimeBtn">Save Times</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Reschedule Modal -->
+    <div class="modal" id="rescheduleModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Reschedule Periods</h3>
+                <button class="close-modal" id="closeRescheduleModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="swapInfo">
+                    <p>You are about to swap the following periods:</p>
+                    <div id="period1Info" style="padding: 15px; background-color: #f0f4ff; border-radius: 5px; margin-bottom: 10px;"></div>
+                    <div style="text-align: center; margin: 10px 0;">
+                        <i class="fas fa-exchange-alt fa-2x" style="color: var(--primary-color);"></i>
+                    </div>
+                    <div id="period2Info" style="padding: 15px; background-color: #f0f4ff; border-radius: 5px; margin-bottom: 10px;"></div>
+                    <p style="margin-top: 15px; font-weight: 600;">This action cannot be undone. Do you want to proceed?</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="cancelRescheduleBtn">Cancel</button>
+                <button class="btn btn-success" id="confirmRescheduleBtn">Confirm Swap</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Copy Year Modal -->
+    <div class="modal" id="copyYearModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="bi bi-copy"></i> Copy Timetable to Another Year</h3>
+                <button class="close-modal" id="closeCopyYearModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Copy the current timetable data to a different academic year.</p>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 5px;">Source Year:</label>
+                    <select id="copySourceYear" class="form-select" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ddd;">
+                        <option value="">Select source year</option>
+                        <option value="2024-25">2024-25</option>
+                        <option value="2025-26">2025-26</option>
+                        <option value="2026-27">2026-27</option>
+                        <option value="2027-28">2027-28</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 5px;">Target Year:</label>
+                    <select id="copyTargetYear" class="form-select" style="width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ddd;">
+                        <option value="">Select target year</option>
+                        <option value="2024-25">2024-25</option>
+                        <option value="2025-26">2025-26</option>
+                        <option value="2026-27">2026-27</option>
+                        <option value="2027-28">2027-28</option>
+                    </select>
+                </div>
+                <div id="copyYearError" style="color: #dc3545; display: none; margin-bottom: 10px;"></div>
+                <div id="copyYearInfo" style="background-color: #e3f2fd; padding: 10px; border-radius: 5px; font-size: 0.9rem;">
+                    <i class="bi bi-info-circle"></i> This will copy: timetable data, holidays, period times, and teacher mappings.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="cancelCopyYearBtn">Cancel</button>
+                <button class="btn btn-success" id="confirmCopyYearBtn">Copy Timetable</button>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- Timetable Export Column Selection Modal -->
+    <div class="modal" id="timetableExportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-export"></i> Export Timetable - Select Columns</h3>
+                <button class="close-modal" id="closeTimetableExportModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label style="font-weight: 600; display: block; margin-bottom: 5px;">Export Format</label>
+                    <select class="form-control" id="timetableExportFormat">
+                        <option value="csv">CSV</option>
+                        <option value="excel">Excel</option>
+                    </select>
+                </div>
+                <p style="color: #6c757d; font-size: 0.9rem; margin-bottom: 10px;">Select at least one period column to include in the export.</p>
+                <div id="timetableColumnList" style="max-height: 300px; overflow-y: auto; padding-right: 10px;">
+                    <!-- Checkboxes populated dynamically -->
+                </div>
+                <div id="timetableExportError" style="color: #dc3545; font-size: 0.85rem; margin-top: 10px; display: none;">
+                    Please select at least one period column.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary" onclick="selectAllTimetableColumns(true)">Select All</button>
+                <button class="btn btn-outline-secondary" onclick="selectAllTimetableColumns(false)">Deselect All</button>
+                <button class="btn btn-danger" id="cancelTimetableExportBtn">Cancel</button>
+                <button class="btn btn-success" onclick="confirmTimetableExport()">Export</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mapping Issues Results Modal -->
+    <div class="modal" id="mappingIssuesModal">
+        <div class="modal-content" style="width: 95%; max-width: 1200px; max-height: 90vh;">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle"></i> Mapping Issues Found</h3>
+                <button class="close-modal" id="closeMappingIssuesModal">&times;</button>
+            </div>
+            <div class="modal-body" style="overflow-y: auto; max-height: calc(90vh - 140px);">
+                <div id="mappingIssuesSummary" style="margin-bottom: 15px; padding: 10px; background-color: #fff3cd; border-radius: 5px;">
+                    <!-- Summary populated dynamically -->
+                </div>
+                
+                <!-- Filters -->
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: flex-start;">
+                    <input type="text" id="filterIssueClass" class="form-control" placeholder="Filter by Class" style="width: 140px;">
+                    <input type="text" id="filterIssueTeacher" class="form-control" placeholder="Filter by Teacher" style="width: 140px;">
+                    <input type="text" id="filterIssueSubject" class="form-control" placeholder="Filter by Subject" style="width: 140px;">
+                    <select id="filterIssueType" class="form-control" style="width: 140px;">
+                        <option value="">All Issue Types</option>
+                        <option value="missing_mapping">Missing Mapping</option>
+                        <option value="invalid_class">Invalid Class</option>
+                    </select>
+                    <div style="width: 200px;">
+                        <label style="font-size: 0.8rem; color: #6c757d; margin-bottom: 2px; display: block;">Exclude Periods:</label>
+                        <select id="filterExcludePeriods" class="form-control" multiple style="height: 60px; font-size: 0.85rem;">
+                            <!-- Populated dynamically -->
+                        </select>
+                        <small style="color: #6c757d; font-size: 0.75rem;">Hold Ctrl/Cmd to select multiple</small>
+                    </div>
+                    <button class="btn btn-outline-secondary" onclick="clearMappingIssueFilters()" style="margin-top: 18px;">
+                        <i class="fas fa-times"></i> Clear
+                    </button>
+                </div>
+                
+                <!-- Issues Table -->
+                <div style="overflow-x: auto;">
+                    <table class="table" id="mappingIssuesTable" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background-color: #f8f9fa;">
+                                <th style="cursor: pointer; padding: 10px; border-bottom: 2px solid #dee2e6;" onclick="sortMappingIssues('className')">
+                                    Class <i class="fas fa-sort"></i>
+                                </th>
+                                <th style="cursor: pointer; padding: 10px; border-bottom: 2px solid #dee2e6;" onclick="sortMappingIssues('day')">
+                                    Day <i class="fas fa-sort"></i>
+                                </th>
+                                <th style="cursor: pointer; padding: 10px; border-bottom: 2px solid #dee2e6;" onclick="sortMappingIssues('period')">
+                                    Period <i class="fas fa-sort"></i>
+                                </th>
+                                <th style="cursor: pointer; padding: 10px; border-bottom: 2px solid #dee2e6;" onclick="sortMappingIssues('teacherName')">
+                                    Teacher <i class="fas fa-sort"></i>
+                                </th>
+                                <th style="cursor: pointer; padding: 10px; border-bottom: 2px solid #dee2e6;" onclick="sortMappingIssues('subject')">
+                                    Subject <i class="fas fa-sort"></i>
+                                </th>
+                                <th style="cursor: pointer; padding: 10px; border-bottom: 2px solid #dee2e6;" onclick="sortMappingIssues('type')">
+                                    Issue Type <i class="fas fa-sort"></i>
+                                </th>
+                                <th style="padding: 10px; border-bottom: 2px solid #dee2e6;">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mappingIssuesTableBody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+                    <div id="mappingIssuesPaginationInfo" style="color: #6c757d; font-size: 0.9rem;">
+                        Showing 0 of 0 issues
+                    </div>
+                    <div style="display: flex; gap: 5px;">
+                        <button class="btn btn-sm btn-outline-secondary" id="prevMappingIssuesPage" onclick="changeMappingIssuesPage(-1)">
+                            <i class="fas fa-chevron-left"></i> Prev
+                        </button>
+                        <span id="mappingIssuesPageInfo" style="padding: 5px 10px;">Page 1 of 1</span>
+                        <button class="btn btn-sm btn-outline-secondary" id="nextMappingIssuesPage" onclick="changeMappingIssuesPage(1)">
+                            Next <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-primary" onclick="exportMappingIssuesCSV()">
+                    <i class="fas fa-file-csv"></i> Export CSV
+                </button>
+                <button class="btn btn-danger" id="closeMappingIssuesBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
