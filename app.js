@@ -82,6 +82,10 @@ let currentCalendarDate = new Date();
 let teacherEvents = [];
 let selectedPSEDIndicators = [];
 
+// Teacher identifier for timetable matching
+let currentTeacherIdentifier = null;
+let currentUseTeacherId = false;
+
 // PSED indicators for event tagging
 const psedIndicators = [
     { id: 'self_awareness', name: 'Self-awareness', category: 'personal' },
@@ -541,9 +545,9 @@ async function loadTeacherTimetable() {
     }
 
     // Use teacherId if available, otherwise fall back to teacherName
-    const teacherIdentifier = teacherId || teacherName || extractTeacherNameFromEmail(currentUser.email);
-    const useTeacherId = !!teacherId;
-    console.log('[DEBUG] Using teacherIdentifier:', teacherIdentifier, 'useTeacherId:', useTeacherId);
+    currentTeacherIdentifier = teacherId || teacherName || extractTeacherNameFromEmail(currentUser?.email);
+    currentUseTeacherId = !!teacherId;
+    console.log('[DEBUG] Using teacherIdentifier:', currentTeacherIdentifier, 'useTeacherId:', currentUseTeacherId);
 
     elements.timetableContainer.innerHTML = `
         <div class="text-center py-3">
@@ -582,7 +586,7 @@ async function loadTeacherTimetable() {
         timetableData = data.timetableData || {};
 
         // Pass teacherId and useTeacherId flag to render function
-        renderTeacherTimetable(teacherIdentifier, useTeacherId);
+        renderTeacherTimetable(currentTeacherIdentifier, currentUseTeacherId);
         
         // Also load teacher events for calendar view
         await loadTeacherEvents();
@@ -808,7 +812,7 @@ function toggleView(view) {
         elements.addEventBtn?.classList.add('d-none');
         // Reload timetable to show table view
         if (timetableData) {
-            renderTeacherTimetable(teacherName || extractTeacherNameFromEmail(currentUser?.email), false);
+            renderTeacherTimetable(currentTeacherIdentifier || teacherName || extractTeacherNameFromEmail(currentUser?.email), currentUseTeacherId);
         }
     } else {
         elements.viewTableBtn?.classList.remove('active');
@@ -1010,6 +1014,64 @@ function editEvent(eventId) {
     modal.show();
 }
 
+// Get day name from date string (e.g., "2025-04-28" -> "Monday")
+function getDayNameFromDate(dateStr) {
+    if (!dateStr) return null;
+    const date = new Date(dateStr);
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return days[date.getDay()];
+}
+
+// Autopopulate class/subject from timetable based on date and period
+function autopopulateFromTimetable() {
+    const dateStr = elements.eventDateInput?.value;
+    const period = elements.eventPeriodInput?.value;
+    
+    console.log('[DEBUG] autopopulateFromTimetable() called, date:', dateStr, 'period:', period);
+    console.log('[DEBUG] Using globals - teacherIdentifier:', currentTeacherIdentifier, 'useTeacherId:', currentUseTeacherId);
+    
+    if (!dateStr || !period || period === 'all' || !timetableData || !currentTeacherIdentifier) {
+        console.log('[DEBUG] Missing data for autopopulate');
+        return;
+    }
+    
+    const dayName = getDayNameFromDate(dateStr);
+    console.log('[DEBUG] Day name from date:', dayName);
+    
+    if (!dayName) return;
+    
+    // Search through timetable data for matching day and period
+    let foundClass = null;
+    let foundSubject = null;
+    
+    Object.values(timetableData).forEach(classData => {
+        if (!classData?.days) return;
+        
+        classData.days.forEach(day => {
+            if (day.dayName !== dayName || !day.periods) return;
+            
+            day.periods.forEach(p => {
+                const periodMatch = String(p.period) === period.replace('P', '');
+                const teacherMatch = currentUseTeacherId 
+                    ? (p.teacherId && p.teacherId.toLowerCase() === currentTeacherIdentifier.toLowerCase())
+                    : (p.teacherName && p.teacherName.toLowerCase() === currentTeacherIdentifier.toLowerCase());
+                
+                if (periodMatch && teacherMatch) {
+                    foundClass = classData.className;
+                    foundSubject = p.subject;
+                    console.log('[DEBUG] Found match:', foundClass, foundSubject);
+                }
+            });
+        });
+    });
+    
+    // Autopopulate if found
+    if (foundClass && foundSubject) {
+        elements.eventClassInput.value = `${foundClass}, ${foundSubject}`;
+        console.log('[DEBUG] Autopopulated class/subject:', elements.eventClassInput.value);
+    }
+}
+
 // Save event to Firestore
 async function saveEvent() {
     if (!currentUser?.email || !teacherSchoolId) {
@@ -1145,4 +1207,12 @@ if (elements.saveEventBtn) {
 }
 if (elements.deleteEventBtn) {
     elements.deleteEventBtn.addEventListener('click', deleteEvent);
+}
+
+// Autopopulate class/subject when date or period changes
+if (elements.eventDateInput) {
+    elements.eventDateInput.addEventListener('change', autopopulateFromTimetable);
+}
+if (elements.eventPeriodInput) {
+    elements.eventPeriodInput.addEventListener('change', autopopulateFromTimetable);
 }
