@@ -125,6 +125,11 @@ function setCurrentSection(sectionId) {
         const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
         elements.analyticsLink.href = `analytics.html${query}`;
     }
+    const psedBulkLink = document.getElementById('psed-bulk-link');
+    if (psedBulkLink) {
+        const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
+        psedBulkLink.href = `psed-bulk-update.html${query}`;
+    }
     if (elements.sectionSelect && section) {
         elements.sectionSelect.value = section.id;
     }
