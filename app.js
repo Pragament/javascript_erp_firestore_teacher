@@ -1000,6 +1000,7 @@ function changeCalendarMonth(delta) {
     currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
     renderCalendar();
 }
+window.changeCalendarMonth = changeCalendarMonth;
 
 // Get event status class based on date
 function getEventStatusClass(eventDate) {
@@ -1071,6 +1072,7 @@ function openEventModal(dateStr = null) {
     const modal = new bootstrap.Modal(elements.eventModal);
     modal.show();
 }
+window.openEventModal = openEventModal;
 
 // Edit existing event
 function editEvent(eventId) {
@@ -1101,6 +1103,7 @@ function editEvent(eventId) {
     const modal = new bootstrap.Modal(elements.eventModal);
     modal.show();
 }
+window.editEvent = editEvent;
 
 // Get day name from date string (e.g., "2025-04-28" -> "Monday")
 function getDayNameFromDate(dateStr) {
