@@ -43,6 +43,7 @@ const elements = {
     signoutBtn: document.getElementById('signout-btn'),
     userEmail: document.getElementById('user-email'),
     sectionName: document.getElementById('section-name'),
+    sectionInfo: document.getElementById('section-info'),
     analyticsLink: document.getElementById('analytics-link'),
     sectionSwitcher: document.getElementById('section-switcher'),
     sectionSelect: document.getElementById('section-select'),
@@ -184,6 +185,9 @@ function setCurrentSection(sectionId) {
     currentSectionId = section ? section.id : null;
     currentSectionName = section ? section.name : '';
     elements.sectionName.textContent = currentSectionId ? `${currentSectionName} (ID: ${currentSectionId})` : 'No section assigned';
+    if (elements.sectionInfo) {
+        elements.sectionInfo.classList.toggle('d-none', !currentSectionId);
+    }
     if (elements.analyticsLink) {
         const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
         elements.analyticsLink.href = `analytics.html${query}`;
@@ -268,6 +272,9 @@ async function loadAssignedSections() {
                 currentSectionId = null;
                 currentSectionName = '';
                 elements.sectionName.textContent = 'No section assigned';
+                if (elements.sectionInfo) {
+                    elements.sectionInfo.classList.add('d-none');
+                }
                 elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are registered as a teacher but not assigned to any section yet. Contact your school admin.</div>';
                 renderSectionSwitcher();
                 return;
@@ -278,6 +285,9 @@ async function loadAssignedSections() {
             currentSectionId = null;
             currentSectionName = '';
             elements.sectionName.textContent = 'No section assigned';
+            if (elements.sectionInfo) {
+                elements.sectionInfo.classList.add('d-none');
+            }
             elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are not assigned to any section yet. Contact your school admin.</div>';
             renderSectionSwitcher();
             return;
