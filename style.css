@@ -54,3 +54,31 @@
 
 /* Event Classes Badge */
 .event-classes-badge{display:inline-block;font-size:0.65rem;background:rgba(0,0,0,0.1);border-radius:10px;padding:1px 6px;margin-left:4px}
+
+/* Week View Styles */
+.calendar-week-view{grid-template-columns:repeat(7,1fr);min-height:300px}
+.calendar-week-view .calendar-day{min-height:200px}
+.calendar-week-view .calendar-day-header{background:#2c3e50;color:white;padding:8px;font-weight:600;text-align:center;border-radius:4px 4px 0 0;margin:-5px -5px 5px -5px}
+.calendar-week-view .week-event{margin-bottom:6px;padding:6px}
+.calendar-week-view .event-header{font-size:0.75rem;color:#6c757d;margin-bottom:2px}
+.calendar-week-view .event-title{font-weight:600;font-size:0.85rem;margin-bottom:2px}
+.calendar-week-view .event-detail{font-size:0.75rem;color:#495057}
+.calendar-week-view .event-time{background:rgba(0,0,0,0.1);border-radius:4px;padding:1px 4px;font-size:0.7rem}
+
+/* Day View Styles */
+.calendar-day-view{display:block;max-width:800px;margin:0 auto}
+.calendar-day-view .calendar-day-card{background:white;border:1px solid #dee2e6;border-radius:8px;padding:16px;margin-bottom:12px;cursor:pointer;transition:box-shadow 0.2s}
+.calendar-day-view .calendar-day-card:hover{box-shadow:0 4px 12px rgba(0,0,0,0.1)}
+.calendar-day-view .day-empty{text-align:center;padding:60px 20px;background:#f8f9fa;border-radius:8px}
+.calendar-day-view .day-card-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.calendar-day-view .day-card-icon{font-size:1.5rem}
+.calendar-day-view .day-card-title{font-size:1.25rem;font-weight:600;flex:1}
+.calendar-day-view .day-card-type{text-transform:capitalize;background:#e9ecef;padding:2px 8px;border-radius:12px;font-size:0.75rem;color:#495057}
+.calendar-day-view .event-details{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px}
+.calendar-day-view .detail-item{font-size:0.85rem;color:#495057}
+.calendar-day-view .detail-item i{color:#6c757d;margin-right:4px}
+.calendar-day-view .event-description{font-size:0.9rem;color:#212529;line-height:1.5;margin-bottom:12px;padding:10px;background:#f8f9fa;border-radius:6px}
+.calendar-day-view .day-card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+
+/* View selector in nav */
+.calendar-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px}

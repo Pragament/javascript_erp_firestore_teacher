@@ -106,6 +106,7 @@ const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 
 // Calendar and event globals
 let currentView = 'table'; // 'table' or 'calendar'
+let currentCalendarView = 'month'; // 'month', 'week', or 'day'
 let currentCalendarDate = new Date();
 let teacherEvents = [];
 let selectedPSEDIndicators = [];
@@ -938,8 +939,57 @@ function toggleView(view) {
     }
 }
 
-// Render calendar view
+// Render calendar view (dispatcher for month/week/day)
 function renderCalendar() {
+    if (currentCalendarView === 'month') {
+        renderMonthView();
+    } else if (currentCalendarView === 'week') {
+        renderWeekView();
+    } else if (currentCalendarView === 'day') {
+        renderDayView();
+    }
+}
+window.renderCalendar = renderCalendar;
+
+// Change calendar period based on current view
+function changeCalendarPeriod(delta) {
+    if (currentCalendarView === 'month') {
+        currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+    } else if (currentCalendarView === 'week') {
+        currentCalendarDate.setDate(currentCalendarDate.getDate() + (delta * 7));
+    } else if (currentCalendarView === 'day') {
+        currentCalendarDate.setDate(currentCalendarDate.getDate() + delta);
+    }
+    renderCalendar();
+}
+window.changeCalendarPeriod = changeCalendarPeriod;
+
+// Set calendar view (month/week/day)
+function setCalendarView(view) {
+    currentCalendarView = view;
+    renderCalendar();
+}
+window.setCalendarView = setCalendarView;
+
+// Get view selector HTML
+function getViewSelectorHtml() {
+    return `
+        <div class="btn-group btn-group-sm" role="group">
+            <button class="btn btn-outline-secondary ${currentCalendarView === 'day' ? 'active' : ''}" onclick="setCalendarView('day')">
+                <i class="bi bi-calendar-event"></i> Day
+            </button>
+            <button class="btn btn-outline-secondary ${currentCalendarView === 'week' ? 'active' : ''}" onclick="setCalendarView('week')">
+                <i class="bi bi-calendar-week"></i> Week
+            </button>
+            <button class="btn btn-outline-secondary ${currentCalendarView === 'month' ? 'active' : ''}" onclick="setCalendarView('month')">
+                <i class="bi bi-calendar-month"></i> Month
+            </button>
+        </div>
+    `;
+}
+
+// Render month view
+function renderMonthView() {
     if (!elements.timetableContainer) return;
 
     const year = currentCalendarDate.getFullYear();
@@ -952,20 +1002,23 @@ function renderCalendar() {
     const daysInMonth = lastDay.getDate();
     const startDayOfWeek = firstDay.getDay(); // 0 = Sunday
 
-    // Adjust for Monday start (optional - change if you want Sunday start)
+    // Adjust for Monday start
     const adjustedStartDay = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
 
     let html = `
         <div class="calendar-nav">
-            <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarMonth(-1)">
-                <i class="bi bi-chevron-left"></i> Prev
-            </button>
-            <span class="calendar-month-year">${monthName}</span>
-            <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarMonth(1)">
-                Next <i class="bi bi-chevron-right"></i>
-            </button>
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarPeriod(-1)">
+                    <i class="bi bi-chevron-left"></i> Prev
+                </button>
+                <span class="calendar-month-year">${monthName}</span>
+                <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarPeriod(1)">
+                    Next <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+            ${getViewSelectorHtml()}
         </div>
-        <div class="calendar-view">
+        <div class="calendar-view calendar-month-view">
             <div class="calendar-header">Mon</div>
             <div class="calendar-header">Tue</div>
             <div class="calendar-header">Wed</div>
@@ -1041,8 +1094,231 @@ function renderCalendar() {
     html += '</div>';
     elements.timetableContainer.innerHTML = html;
 }
+window.renderMonthView = renderMonthView;
 
-// Change calendar month
+// Render week view
+function renderWeekView() {
+    if (!elements.timetableContainer) return;
+
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+    const date = currentCalendarDate.getDate();
+    const dayOfWeek = currentCalendarDate.getDay();
+
+    // Adjust for Monday start (0 = Monday, 6 = Sunday)
+    const adjustedDayOfWeek = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+    // Get start of week (Monday)
+    const weekStart = new Date(year, month, date - adjustedDayOfWeek);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+
+    const weekRangeText = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+    let html = `
+        <div class="calendar-nav">
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarPeriod(-1)">
+                    <i class="bi bi-chevron-left"></i> Prev
+                </button>
+                <span class="calendar-month-year">${weekRangeText}</span>
+                <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarPeriod(1)">
+                    Next <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+            ${getViewSelectorHtml()}
+        </div>
+        <div class="calendar-view calendar-week-view">
+    `;
+
+    const today = new Date();
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    // Generate 7 days
+    for (let i = 0; i < 7; i++) {
+        const currentDay = new Date(weekStart);
+        currentDay.setDate(weekStart.getDate() + i);
+
+        const dateStr = currentDay.toISOString().split('T')[0];
+        const dayNum = currentDay.getDate();
+        const isToday = today.toDateString() === currentDay.toDateString();
+        const dayClass = isToday ? 'calendar-day today' : 'calendar-day';
+
+        // Get events for this day
+        const dayEvents = teacherEvents.filter(e => e.date === dateStr);
+
+        html += `<div class="${dayClass}" onclick="openEventModal('${dateStr}')">`;
+        html += `<div class="calendar-day-header">${dayNames[i]} ${dayNum}</div>`;
+
+        // Render events with more details in week view
+        dayEvents.forEach(event => {
+            const eventClass = getEventStatusClass(event.date);
+            const tagsHtml = event.psedTags?.map(tag => `<span class="event-tag psed-tag-${getPSEDTagCategory(tag)}">${tag}</span>`).join('') || '';
+
+            // Get event type and color
+            const eventType = event.eventType || event.type || 'test';
+            const borderColor =
+                eventType === 'test' ? '#dc2626' :
+                eventType === 'revision' ? '#16a34a' :
+                eventType === 'theory' ? '#2563eb' :
+                eventType === 'practical' ? '#7c3aed' : '#2c3e50';
+
+            // Get icon based on type
+            const typeIcon =
+                eventType === 'test' ? '📝' :
+                eventType === 'revision' ? '📖' :
+                eventType === 'theory' ? '🧠' :
+                eventType === 'practical' ? '🔬' : '📅';
+
+            // Week view shows more details
+            const subjects = event.subjects ? `<div class="event-detail">${escapeHtml(event.subjects)}</div>` : '';
+            const period = event.period ? `<span class="event-time">${escapeHtml(event.period)}</span>` : '';
+
+            html += `
+                <div class="calendar-event ${eventClass} week-event" onclick="event.stopPropagation(); editEvent('${event.id}')" style="border-left: 4px solid ${borderColor};">
+                    <div class="event-header">${typeIcon} ${period}</div>
+                    <div class="event-title">${escapeHtml(event.title)}</div>
+                    ${subjects}
+                    ${tagsHtml}
+                </div>
+            `;
+        });
+
+        html += '</div>';
+    }
+
+    html += '</div>';
+    elements.timetableContainer.innerHTML = html;
+}
+window.renderWeekView = renderWeekView;
+
+// Render day view
+function renderDayView() {
+    if (!elements.timetableContainer) return;
+
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+    const date = currentCalendarDate.getDate();
+    const dayOfWeek = currentCalendarDate.getDay();
+
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayName = dayNames[dayOfWeek];
+    const dateStr = currentCalendarDate.toISOString().split('T')[0];
+    const isToday = new Date().toDateString() === currentCalendarDate.toDateString();
+
+    const dateDisplay = currentCalendarDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+    let html = `
+        <div class="calendar-nav">
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarPeriod(-1)">
+                    <i class="bi bi-chevron-left"></i> Prev
+                </button>
+                <span class="calendar-month-year ${isToday ? 'text-primary' : ''}">${dateDisplay}</span>
+                <button class="btn btn-outline-secondary btn-sm" onclick="changeCalendarPeriod(1)">
+                    Next <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+            ${getViewSelectorHtml()}
+        </div>
+        <div class="calendar-view calendar-day-view">
+    `;
+
+    // Get events for this day
+    const dayEvents = teacherEvents.filter(e => e.date === dateStr);
+
+    if (dayEvents.length === 0) {
+        html += `
+            <div class="calendar-empty-state day-empty">
+                <i class="bi bi-calendar-x" style="font-size: 2rem; color: #adb5bd;"></i>
+                <p class="mt-2">No events for this day</p>
+                <button class="btn btn-outline-primary btn-sm mt-2" onclick="openEventModal('${dateStr}')">
+                    <i class="bi bi-plus-lg"></i> Add Event
+                </button>
+            </div>
+        `;
+    } else {
+        // Sort events by period if available
+        dayEvents.sort((a, b) => (a.period || '').localeCompare(b.period || ''));
+
+        dayEvents.forEach(event => {
+            const eventClass = getEventStatusClass(event.date);
+            const tagsHtml = event.psedTags?.map(tag => `<span class="event-tag psed-tag-${getPSEDTagCategory(tag)}">${tag}</span>`).join('') || '';
+
+            // Get event type and color
+            const eventType = event.eventType || event.type || 'test';
+            const borderColor =
+                eventType === 'test' ? '#dc2626' :
+                eventType === 'revision' ? '#16a34a' :
+                eventType === 'theory' ? '#2563eb' :
+                eventType === 'practical' ? '#7c3aed' : '#2c3e50';
+
+            // Get icon based on type
+            const typeIcon =
+                eventType === 'test' ? '📝' :
+                eventType === 'revision' ? '📖' :
+                eventType === 'theory' ? '🧠' :
+                eventType === 'practical' ? '🔬' : '📅';
+
+            // Day view shows full details
+            const details = [];
+            if (event.period) details.push(`<span class="detail-item"><i class="bi bi-clock"></i> ${escapeHtml(event.period)}</span>`);
+            if (event.classes) details.push(`<span class="detail-item"><i class="bi bi-people"></i> ${escapeHtml(event.classes)}</span>`);
+            if (event.subjects) details.push(`<span class="detail-item"><i class="bi bi-book"></i> ${escapeHtml(event.subjects)}</span>`);
+            if (event.chapters) details.push(`<span class="detail-item"><i class="bi bi-journal-text"></i> Chapters: ${escapeHtml(event.chapters)}</span>`);
+            if (event.topics) details.push(`<span class="detail-item"><i class="bi bi-list-check"></i> Topics: ${escapeHtml(event.topics)}</span>`);
+
+            // Type-specific details
+            if (eventType === 'test') {
+                if (event.frequency) details.push(`<span class="detail-item"><i class="bi bi-calendar-check"></i> ${escapeHtml(event.frequency)}</span>`);
+                if (event.testMode) details.push(`<span class="detail-item"><i class="bi bi-laptop"></i> Mode: ${escapeHtml(event.testMode)}</span>`);
+                if (event.category) details.push(`<span class="detail-item"><i class="bi bi-lock"></i> ${escapeHtml(event.category)}</span>`);
+            } else if (eventType === 'revision') {
+                if (event.revisionGroupType) details.push(`<span class="detail-item"><i class="bi bi-person-check"></i> ${escapeHtml(event.revisionGroupType)}</span>`);
+                if (event.revisionLocation) details.push(`<span class="detail-item"><i class="bi bi-geo-alt"></i> ${escapeHtml(event.revisionLocation)}</span>`);
+                if (event.testRelation && event.testRelation !== 'none') details.push(`<span class="detail-item"><i class="bi bi-link"></i> ${escapeHtml(event.testRelation)}</span>`);
+            }
+
+            const detailsHtml = details.length > 0 ? `<div class="event-details">${details.join('')}</div>` : '';
+
+            // Description
+            const descHtml = event.description ? `<div class="event-description">${escapeHtml(event.description)}</div>` : '';
+
+            html += `
+                <div class="calendar-day-card ${eventClass}" onclick="editEvent('${event.id}')" style="border-left: 6px solid ${borderColor};">
+                    <div class="day-card-header">
+                        <span class="day-card-icon">${typeIcon}</span>
+                        <span class="day-card-title">${escapeHtml(event.title)}</span>
+                        <span class="day-card-type">${eventType}</span>
+                    </div>
+                    ${detailsHtml}
+                    ${descHtml}
+                    <div class="day-card-footer">
+                        ${tagsHtml}
+                        <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); editEvent('${event.id}')">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        // Add button at bottom
+        html += `
+            <div class="text-center mt-3">
+                <button class="btn btn-outline-primary" onclick="openEventModal('${dateStr}')">
+                    <i class="bi bi-plus-lg"></i> Add Another Event
+                </button>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    elements.timetableContainer.innerHTML = html;
+}
+window.renderDayView = renderDayView;
+
+// Change calendar month (legacy - now uses changeCalendarPeriod)
 function changeCalendarMonth(delta) {
     currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
     renderCalendar();
