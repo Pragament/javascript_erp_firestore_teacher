@@ -218,14 +218,62 @@ function getTestResultsPageUrl(testId) {
     return `test-results.html?testId=${encodeURIComponent(testId)}&sectionId=${encodeURIComponent(currentSectionId)}`;
 }
 
+// Check if teacher exists in any school's teachers collection
+async function checkTeacherInSchools(email) {
+    try {
+        // Query all schools and check their teachers subcollection
+        const schoolsSnapshot = await firestore.collection('schools').get();
+
+        for (const schoolDoc of schoolsSnapshot.docs) {
+            const teachersSnapshot = await firestore.collection('schools')
+                .doc(schoolDoc.id)
+                .collection('teachers')
+                .where('email', '==', email)
+                .limit(1)
+                .get();
+
+            if (!teachersSnapshot.empty) {
+                const teacherData = teachersSnapshot.docs[0].data();
+                return {
+                    found: true,
+                    schoolId: schoolDoc.id,
+                    teacherId: teachersSnapshot.docs[0].id,
+                    teacherData: teacherData
+                };
+            }
+        }
+        return { found: false };
+    } catch (error) {
+        console.error('Error checking teacher in schools:', error);
+        return { found: false };
+    }
+}
+
 // Get teacher's assigned sections
 async function loadAssignedSections() {
     try {
         const snapshot = await firestore.collection('teacherAssignments')
             .where('teacherEmail', '==', currentUser.email)
             .get();
-        
+
         if (snapshot.empty) {
+            // Check if teacher exists in schools/{schoolId}/teachers collection
+            const schoolCheck = await checkTeacherInSchools(currentUser.email);
+
+            if (schoolCheck.found) {
+                // Teacher found in school's teachers collection - allow login with empty sections
+                console.log('[DEBUG] Teacher found in school:', schoolCheck.schoolId);
+                teacherSchoolId = schoolCheck.schoolId;
+                availableSections = [];
+                currentSectionId = null;
+                currentSectionName = '';
+                elements.sectionName.textContent = 'No section assigned';
+                elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are registered as a teacher but not assigned to any section yet. Contact your school admin.</div>';
+                renderSectionSwitcher();
+                return;
+            }
+
+            // Teacher not found anywhere - block login
             availableSections = [];
             currentSectionId = null;
             currentSectionName = '';
@@ -471,19 +519,49 @@ async function loadTeacherInfo() {
         });
 
         if (snapshot.empty) {
-            console.log('[DEBUG] No teacher assignments found');
+            console.log('[DEBUG] No teacher assignments found, checking schools collection');
+
+            // Check if teacher exists in schools/{schoolId}/teachers collection
+            const schoolCheck = await checkTeacherInSchools(currentUser.email);
+
+            if (schoolCheck.found) {
+                console.log('[DEBUG] Teacher found in school collection:', schoolCheck.schoolId);
+
+                // Use schoolId from schools collection
+                if (!teacherSchoolId) {
+                    teacherSchoolId = schoolCheck.schoolId;
+                    console.log('[DEBUG] Using schoolId from schools collection:', teacherSchoolId);
+                }
+
+                // Use teacherName from schools data or extract from email
+                teacherName = schoolCheck.teacherData.name ||
+                              schoolCheck.teacherData.teacherName ||
+                              extractTeacherNameFromEmail(currentUser.email);
+                console.log('[DEBUG] Final teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
+
+                // Show timetable section if we have school info
+                console.log('[DEBUG] teacherSchoolId present?', !!teacherSchoolId, 'timetableSection exists?', !!elements.timetableSection);
+                if (teacherSchoolId && elements.timetableSection) {
+                    elements.timetableSection.classList.remove('d-none');
+                    console.log('[DEBUG] Timetable section made visible');
+                }
+
+                return true;
+            }
+
+            console.log('[DEBUG] Teacher not found in schools collection either');
             return false;
         }
 
         const assignment = snapshot.docs[0].data();
         console.log('[DEBUG] Using assignment:', assignment);
-        
+
         // Use schoolId from section if available, otherwise fallback to assignment
         if (!teacherSchoolId) {
             teacherSchoolId = assignment.schoolId || null;
             console.log('[DEBUG] Using schoolId from assignment:', teacherSchoolId);
         }
-        
+
         teacherName = assignment.teacherName || extractTeacherNameFromEmail(currentUser.email);
         console.log('[DEBUG] Final teacherSchoolId:', teacherSchoolId, 'teacherName:', teacherName);
 
