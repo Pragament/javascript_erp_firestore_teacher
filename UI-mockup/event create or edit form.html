@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>Teacher TimeTable Planner | Test & Revision Calendar</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: system-ui, 'Segoe UI', 'Inter', 'Roboto', sans-serif;
+    }
+    body {
+      background: #e9f0f5;
+      margin: 0;
+      padding: 20px;
+    }
+    .app-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 28px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    /* header toolbar */
+    .toolbar {
+      background: #2c3e66;
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .logo {
+      font-weight: 700;
+      font-size: 1.4rem;
+      letter-spacing: -0.3px;
+      background: #ffcd6b;
+      color: #1e2a47;
+      padding: 4px 12px;
+      border-radius: 40px;
+    }
+    .storage-buttons {
+      display: flex;
+      gap: 12px;
+    }
+    button {
+      background: #ffcd6b;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 40px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.2s;
+      color: #1e2a47;
+      font-size: 0.85rem;
+    }
+    button.btn-secondary {
+      background: #ffffff30;
+      color: white;
+      backdrop-filter: blur(2px);
+    }
+    button.btn-secondary:hover {
+      background: #ffffff50;
+    }
+    button:hover {
+      background: #ffbc3c;
+      transform: scale(0.97);
+    }
+    .calendar-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+      padding: 12px 24px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .month-year {
+      font-weight: bold;
+      font-size: 1.5rem;
+    }
+    .weekdays {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      background: #f1f5f9;
+      font-weight: 600;
+      text-align: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      background: white;
+    }
+    .calendar-day {
+      min-height: 110px;
+      border-right: 1px solid #e2e8f0;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 8px;
+      background: white;
+      transition: 0.1s;
+      position: relative;
+    }
+    .calendar-day.other-month {
+      background: #fefcf5;
+      color: #94a3b8;
+    }
+    .day-number {
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-bottom: 6px;
+      display: inline-block;
+      background: #eef2ff;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+    .event-item {
+      background: #eef2ff;
+      margin-top: 4px;
+      padding: 4px 6px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-left: 4px solid;
+      white-space: nowrap;
+      overflow-x: hidden;
+      text-overflow: ellipsis;
+    }
+    .event-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      background: rgba(0,0,0,0.1);
+      border-radius: 16px;
+      padding: 0 6px;
+      margin-left: 4px;
+    }
+    .add-event-btn {
+      position: absolute;
+      bottom: 4px;
+      right: 6px;
+      background: #e2e8f0;
+      border-radius: 40px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      cursor: pointer;
+      opacity: 0.6;
+    }
+    .add-event-btn:hover {
+      opacity: 1;
+      background: #ffcd6b;
+    }
+    /* modal overlay */
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-content {
+      background: white;
+      max-width: 700px;
+      width: 90%;
+      max-height: 85vh;
+      overflow-y: auto;
+      border-radius: 32px;
+      padding: 20px 28px;
+      box-shadow: 0 25px 40px rgba(0,0,0,0.25);
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    label {
+      font-weight: 600;
+      display: block;
+      margin-bottom: 5px;
+      font-size: 0.85rem;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 16px;
+      border: 1px solid #cbd5e1;
+      font-size: 0.85rem;
+    }
+    .row-2col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .flex-row {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    hr {
+      margin: 16px 0;
+    }
+    .availability-note {
+      background: #f1f5f9;
+      border-radius: 16px;
+      padding: 8px;
+      font-size: 0.75rem;
+    }
+    .grade-bulk {
+      background: #f9f7e8;
+      padding: 8px;
+      border-radius: 16px;
+    }
+    button.small {
+      padding: 4px 12px;
+      font-size: 0.7rem;
+    }
+    @media (max-width: 700px) {
+      .calendar-day { min-height: 80px; font-size: 0.7rem;}
+      .event-item { font-size: 0.6rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-container">
+  <div class="toolbar">
+    <div class="logo">📚 Teacher Timetable Planner</div>
+    <div class="storage-buttons">
+      <button id="saveDataBtn">💾 Save to LocalStorage</button>
+      <button id="loadDataBtn">📂 Load from LocalStorage</button>
+      <button id="clearExampleBtn">🗑 Clear Demo</button>
+    </div>
+  </div>
+  <div class="calendar-nav">
+    <button id="prevMonthBtn">◀ Prev</button>
+    <span class="month-year" id="monthYearDisplay">March 2026</span>
+    <button id="nextMonthBtn">Next ▶</button>
+  </div>
+  <div class="weekdays">
+    <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+  </div>
+  <div id="calendarGrid" class="calendar-grid"></div>
+</div>
+
+<!-- Modal for event creation / edit -->
+<div id="eventModal" class="modal">
+  <div class="modal-content">
+    <h3 id="modalTitle">➕ Add / Edit Event</h3>
+    <input type="hidden" id="eventId">
+    <input type="hidden" id="eventDate">
+
+    <div class="form-group">
+      <label>Event Type</label>
+      <select id="eventType">
+        <option value="test">📝 Test</option>
+        <option value="revision">📖 Revision</option>
+        <option value="theory">🧠 Theory</option>
+        <option value="practical">🔬 Practical</option>
+      </select>
+    </div>
+
+    <!-- dynamic fields: test-specific & revision-specific -->
+    <div id="testFields" style="display:none;">
+      <div class="form-group"><label>Test Frequency Type</label>
+        <select id="testFrequency"><option>Daily tests</option><option>Weekly tests</option><option>Periodic Tests (PT-1)</option><option>Periodic Tests (PT-2)</option><option>Periodic Tests (PT-3)</option><option>Half-Yearly / Mid-Term Exam</option><option>Annual Exam (Final)</option><option>Olympiad monthly</option><option>IIT twice a month</option></select>
+      </div>
+      <div class="form-group"><label>Test Mode</label><select id="testMode"><option>Android touch tv</option><option>Computer lab</option><option>OMR</option><option>Paper - manual marks entry</option></select></div>
+      <div class="form-group"><label>Category</label><select id="testCategory"><option>Open book</option><option>Closed book</option></select></div>
+      <div class="form-group"><label>Syllabus Details (Class,Subject,Chapter,Topic,Subtopic)</label><textarea id="testSyllabus" rows="2" placeholder="e.g., Class 10A, Science, Ch5, Photosynthesis, Light reaction"></textarea></div>
+      <div class="form-group"><label>Per Student Grade Expectations (bulk entry for group)</label><textarea id="gradeExpectations" rows="2" placeholder="Student: Grade expectation, e.g., Riya:85%, John:92% or 'All above 80%'"></textarea></div>
+    </div>
+
+    <div id="revisionFields" style="display:none;">
+      <div class="form-group"><label>Revision Type</label><select id="revisionGroupType"><option>Single student</option><option>Group of students</option></select></div>
+      <div class="form-group"><label>Revision Location</label><select id="revisionLocation"><option>Homework</option><option>School - Android touch tv room</option><option>School - Computer lab</option><option>School - Generic</option></select></div>
+      <div id="availabilityBlock" class="availability-note" style="display:none;">📍 Check availability: <span id="availMsg"></span></div>
+      <div class="form-group"><label>Revision Syllabus (different for students)</label><textarea id="revisionSyllabus" rows="2" placeholder="Different syllabus per student/group: class 9: Trigonometry, class 10: Algebra"></textarea></div>
+      <div class="form-group"><label>Test relation</label><select id="testRelation"><option value="none">None</option><option value="before">Before revision test (optional)</option><option value="after">After revision test (mandatory)</option><option value="both">Both before & after</option></select></div>
+      <div class="form-group"><label>Before test teacher expectations (quick bulk grade)</label><textarea id="revisionGradeExpect" rows="2" placeholder="Per student grade target..."></textarea></div>
+    </div>
+
+    <!-- common fields: class, subject, etc for all events -->
+    <div class="row-2col">
+      <div class="form-group"><label>Class(es)</label><input id="eventClasses" placeholder="e.g., 10A, 10B"></div>
+      <div class="form-group"><label>Subject(s)</label><input id="eventSubjects" placeholder="Mathematics, Physics"></div>
+    </div>
+    <div class="row-2col">
+      <div class="form-group"><label>Chapter(s)</label><input id="eventChapters" placeholder="Chapter 3,4"></div>
+      <div class="form-group"><label>Topic(s)</label><input id="eventTopics" placeholder="Calculus, Derivatives"></div>
+    </div>
+    <div class="form-group"><label>Subtopic(s)</label><input id="eventSubtopics" placeholder="Chain rule"></div>
+    <div class="form-group"><label>Group activity (multiple classes/subjects)</label><input id="groupActivity" placeholder="e.g., Group project / Mixed class activity"></div>
+    <div class="flex-row">
+      <label><input type="checkbox" id="isGroupActivity"> Group activity (test after activity)</label>
+    </div>
+    <div class="form-group"><button id="saveEventBtn" class="btn-secondary" style="background:#2c3e66;color:white;">Save Event</button> <button id="closeModalBtn" style="background:#ccc;">Cancel</button></div>
+  </div>
+</div>
+
+<script>
+  // store events: key = "YYYY-MM-DD", value = array of event objects
+  let eventsMap = new Map(); 
+  let currentDate = new Date(); // current view year/month
+
+  // helper: format YYYY-MM-DD
+  function formatYMD(date) {
+    let y = date.getFullYear();
+    let m = String(date.getMonth() + 1).padStart(2,'0');
+    let d = String(date.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // load from localStorage
+  function loadFromLocal() {
+    const stored = localStorage.getItem('teacherPlannerEvents');
+    if(stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        eventsMap.clear();
+        for(let [dateKey, eventsArr] of Object.entries(parsed)) {
+          eventsMap.set(dateKey, eventsArr);
+        }
+        renderCalendar();
+        alert("Data loaded from LocalStorage ✓");
+      } catch(e) { alert("Error loading"); }
+    } else { alert("No saved data found"); }
+  }
+
+  function saveToLocal() {
+    const obj = {};
+    for(let [k,v] of eventsMap.entries()) {
+      obj[k] = v;
+    }
+    localStorage.setItem('teacherPlannerEvents', JSON.stringify(obj));
+    alert("Saved to LocalStorage ✔");
+  }
+
+  function clearDemoData() {
+    if(confirm("Clear all events? (cannot undo)")) {
+      eventsMap.clear();
+      renderCalendar();
+    }
+  }
+
+  // add sample demo events
+  function addDemoEvents() {
+    const today = formatYMD(new Date());
+    const tomorrow = formatYMD(new Date(Date.now() + 86400000));
+    eventsMap.set(today, [{
+      id: Date.now()+1, type: "test", title: "Math Weekly Test",
+      frequency: "Weekly tests", testMode: "OMR", category: "Closed book", testSyllabus: "Algebra Ch2",
+      classes: "10A,10B", subjects: "Math", chapters: "2", topics: "Quadratic", subtopics: "Roots",
+      gradeExpectations: "Above 75%", groupActivity: false
+    }]);
+    eventsMap.set(tomorrow, [{
+      id: Date.now()+2, type: "revision", title: "Physics Revision",
+      revisionGroupType: "Group of students", revisionLocation: "School - Android touch tv room",
+      revisionSyllabus: "Electricity & Magnetism", testRelation: "after", revisionGradeExpect: "90% expected",
+      classes: "10A", subjects: "Physics", chapters: "12", topics: "Ohm's law", subtopics: "Circuits"
+    }]);
+    renderCalendar();
+  }
+
+  function renderCalendar() {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDayOfMonth = new Date(year, month, 1);
+    const startWeekday = firstDayOfMonth.getDay(); // 0 sun -> we want mon first: adjust
+    let startOffset = (startWeekday === 0 ? 6 : startWeekday - 1);
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const prevMonthDays = new Date(year, month, 0).getDate();
+    
+    const grid = document.getElementById('calendarGrid');
+    grid.innerHTML = '';
+    let dateCells = [];
+    // prev month days
+    for(let i = startOffset-1; i >=0; i--) {
+      let dayNum = prevMonthDays - i;
+      let dateObj = new Date(year, month-1, dayNum);
+      dateCells.push({date: dateObj, isCurrentMonth: false});
+    }
+    for(let d=1; d<=daysInMonth; d++) {
+      dateCells.push({date: new Date(year, month, d), isCurrentMonth: true});
+    }
+    let totalCells = dateCells.length;
+    let remaining = 42 - totalCells;
+    for(let i=1; i<=remaining; i++) {
+      dateCells.push({date: new Date(year, month+1, i), isCurrentMonth: false});
+    }
+    
+    dateCells.forEach((cell, idx) => {
+      const dateObj = cell.date;
+      const ymd = formatYMD(dateObj);
+      const events = eventsMap.get(ymd) || [];
+      const dayDiv = document.createElement('div');
+      dayDiv.className = 'calendar-day' + (cell.isCurrentMonth ? '' : ' other-month');
+      const dayNumberSpan = document.createElement('span');
+      dayNumberSpan.className = 'day-number';
+      dayNumberSpan.innerText = dateObj.getDate();
+      dayDiv.appendChild(dayNumberSpan);
+      
+      events.forEach(ev => {
+        const eventDiv = document.createElement('div');
+        eventDiv.className = 'event-item';
+        let prefix = ev.type === 'test' ? '📝' : (ev.type === 'revision' ? '📖' : (ev.type === 'theory' ? '🧠' : '🔬'));
+        let title = ev.title || (ev.type === 'test' ? 'Test' : ev.type);
+        let freqInfo = ev.frequency ? ` (${ev.frequency})` : '';
+        eventDiv.style.borderLeftColor = ev.type === 'test' ? '#dc2626' : (ev.type === 'revision' ? '#16a34a' : '#3b82f6');
+        eventDiv.innerHTML = `${prefix} ${title}${freqInfo}<span class="event-badge">${ev.classes || ''}</span>`;
+        eventDiv.addEventListener('click', (e) => { e.stopPropagation(); openEditEvent(ymd, ev); });
+        dayDiv.appendChild(eventDiv);
+      });
+      
+      const addBtn = document.createElement('div');
+      addBtn.className = 'add-event-btn';
+      addBtn.innerText = '+';
+      addBtn.addEventListener('click', (e) => { e.stopPropagation(); openAddEvent(ymd); });
+      dayDiv.appendChild(addBtn);
+      grid.appendChild(dayDiv);
+    });
+    document.getElementById('monthYearDisplay').innerHTML = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+  }
+  
+  let currentEditDate = null;
+  let currentEditEvent = null;
+  
+  function openAddEvent(dateStr) {
+    currentEditDate = dateStr;
+    currentEditEvent = null;
+    document.getElementById('modalTitle').innerText = '➕ New Event';
+    document.getElementById('eventId').value = '';
+    document.getElementById('eventDate').value = dateStr;
+    // reset fields
+    document.getElementById('eventType').value = 'test';
+    toggleTestRevisionFields('test');
+    document.getElementById('eventClasses').value = '';
+    document.getElementById('eventSubjects').value = '';
+    document.getElementById('eventChapters').value = '';
+    document.getElementById('eventTopics').value = '';
+    document.getElementById('eventSubtopics').value = '';
+    document.getElementById('groupActivity').value = '';
+    document.getElementById('isGroupActivity').checked = false;
+    // test fields defaults
+    document.getElementById('testFrequency').value = 'Weekly tests';
+    document.getElementById('testMode').value = 'OMR';
+    document.getElementById('testCategory').value = 'Closed book';
+    document.getElementById('testSyllabus').value = '';
+    document.getElementById('gradeExpectations').value = '';
+    // revision defaults
+    document.getElementById('revisionGroupType').value = 'Group of students';
+    document.getElementById('revisionLocation').value = 'Homework';
+    document.getElementById('revisionSyllabus').value = '';
+    document.getElementById('testRelation').value = 'none';
+    document.getElementById('revisionGradeExpect').value = '';
+    document.getElementById('availMsg').innerText = '';
+    document.getElementById('availabilityBlock').style.display = 'none';
+    document.getElementById('eventModal').style.display = 'flex';
+  }
+  
+  function openEditEvent(dateStr, eventObj) {
+    currentEditDate = dateStr;
+    currentEditEvent = eventObj;
+    document.getElementById('modalTitle').innerText = '✏️ Edit Event';
+    document.getElementById('eventId').value = eventObj.id || Date.now();
+    document.getElementById('eventDate').value = dateStr;
+    document.getElementById('eventType').value = eventObj.type;
+    toggleTestRevisionFields(eventObj.type);
+    document.getElementById('eventClasses').value = eventObj.classes || '';
+    document.getElementById('eventSubjects').value = eventObj.subjects || '';
+    document.getElementById('eventChapters').value = eventObj.chapters || '';
+    document.getElementById('eventTopics').value = eventObj.topics || '';
+    document.getElementById('eventSubtopics').value = eventObj.subtopics || '';
+    document.getElementById('groupActivity').value = eventObj.groupActivityText || '';
+    document.getElementById('isGroupActivity').checked = eventObj.isGroupActivity || false;
+    if(eventObj.type === 'test') {
+      document.getElementById('testFrequency').value = eventObj.frequency || 'Weekly tests';
+      document.getElementById('testMode').value = eventObj.testMode || 'OMR';
+      document.getElementById('testCategory').value = eventObj.category || 'Closed book';
+      document.getElementById('testSyllabus').value = eventObj.testSyllabus || '';
+      document.getElementById('gradeExpectations').value = eventObj.gradeExpectations || '';
+    } else {
+      document.getElementById('revisionGroupType').value = eventObj.revisionGroupType || 'Group of students';
+      document.getElementById('revisionLocation').value = eventObj.revisionLocation || 'Homework';
+      document.getElementById('revisionSyllabus').value = eventObj.revisionSyllabus || '';
+      document.getElementById('testRelation').value = eventObj.testRelation || 'none';
+      document.getElementById('revisionGradeExpect').value = eventObj.revisionGradeExpect || '';
+      updateAvailability(eventObj.revisionLocation, currentEditDate);
+    }
+    document.getElementById('eventModal').style.display = 'flex';
+  }
+  
+  function updateAvailability(location, dateKey) {
+    const availDiv = document.getElementById('availabilityBlock');
+    const msgSpan = document.getElementById('availMsg');
+    if(location && (location.includes('Android touch tv room') || location.includes('Computer lab'))) {
+      availDiv.style.display = 'block';
+      const dayOfWeek = new Date(dateKey).toLocaleDateString('en', { weekday: 'long' });
+      let available = (dayOfWeek !== 'Saturday' && dayOfWeek !== 'Sunday') ? "✅ Available on "+dayOfWeek+" : 8:00 - 16:00" : "⚠️ Limited availability (weekend maybe closed)";
+      msgSpan.innerText = available;
+    } else {
+      availDiv.style.display = 'none';
+    }
+  }
+  
+  function toggleTestRevisionFields(type) {
+    const testDiv = document.getElementById('testFields');
+    const revDiv = document.getElementById('revisionFields');
+    if(type === 'test') {
+      testDiv.style.display = 'block';
+      revDiv.style.display = 'none';
+    } else if(type === 'revision') {
+      testDiv.style.display = 'none';
+      revDiv.style.display = 'block';
+    } else {
+      testDiv.style.display = 'none';
+      revDiv.style.display = 'none';
+    }
+  }
+  
+  document.getElementById('eventType').addEventListener('change', (e) => {
+    toggleTestRevisionFields(e.target.value);
+    if(e.target.value === 'revision') {
+      const loc = document.getElementById('revisionLocation').value;
+      const date = document.getElementById('eventDate').value;
+      updateAvailability(loc, date);
+    }
+  });
+  document.getElementById('revisionLocation').addEventListener('change', (e) => {
+    if(document.getElementById('eventType').value === 'revision') {
+      updateAvailability(e.target.value, document.getElementById('eventDate').value);
+    }
+  });
+  
+  function saveEventHandler() {
+    const dateKey = document.getElementById('eventDate').value;
+    if(!dateKey) return;
+    const eventType = document.getElementById('eventType').value;
+    const id = document.getElementById('eventId').value || (Date.now() + Math.random());
+    const baseEvent = {
+      id: id,
+      type: eventType,
+      classes: document.getElementById('eventClasses').value,
+      subjects: document.getElementById('eventSubjects').value,
+      chapters: document.getElementById('eventChapters').value,
+      topics: document.getElementById('eventTopics').value,
+      subtopics: document.getElementById('eventSubtopics').value,
+      groupActivityText: document.getElementById('groupActivity').value,
+      isGroupActivity: document.getElementById('isGroupActivity').checked,
+      title: (eventType === 'test' ? (document.getElementById('testFrequency').value || 'Test') : (eventType==='revision'?'Revision Session':eventType))
+    };
+    if(eventType === 'test') {
+      baseEvent.frequency = document.getElementById('testFrequency').value;
+      baseEvent.testMode = document.getElementById('testMode').value;
+      baseEvent.category = document.getElementById('testCategory').value;
+      baseEvent.testSyllabus = document.getElementById('testSyllabus').value;
+      baseEvent.gradeExpectations = document.getElementById('gradeExpectations').value;
+    } else if(eventType === 'revision') {
+      baseEvent.revisionGroupType = document.getElementById('revisionGroupType').value;
+      baseEvent.revisionLocation = document.getElementById('revisionLocation').value;
+      baseEvent.revisionSyllabus = document.getElementById('revisionSyllabus').value;
+      baseEvent.testRelation = document.getElementById('testRelation').value;
+      baseEvent.revisionGradeExpect = document.getElementById('revisionGradeExpect').value;
+    } else {
+      // theory/practical minimal
+      baseEvent.extraNotes = "Theory/Practical session";
+    }
+    
+    let events = eventsMap.get(dateKey) || [];
+    if(currentEditEvent) {
+      events = events.filter(ev => ev.id != currentEditEvent.id);
+    }
+    events.push(baseEvent);
+    eventsMap.set(dateKey, events);
+    renderCalendar();
+    document.getElementById('eventModal').style.display = 'none';
+  }
+  
+  document.getElementById('saveEventBtn').addEventListener('click', saveEventHandler);
+  document.getElementById('closeModalBtn').addEventListener('click', () => { document.getElementById('eventModal').style.display = 'none'; });
+  document.getElementById('prevMonthBtn').addEventListener('click', ()=>{
+    currentDate.setMonth(currentDate.getMonth()-1);
+    renderCalendar();
+  });
+  document.getElementById('nextMonthBtn').addEventListener('click', ()=>{
+    currentDate.setMonth(currentDate.getMonth()+1);
+    renderCalendar();
+  });
+  document.getElementById('saveDataBtn').addEventListener('click', saveToLocal);
+  document.getElementById('loadDataBtn').addEventListener('click', loadFromLocal);
+  document.getElementById('clearExampleBtn').addEventListener('click', clearDemoData);
+  
+  // initial demo
+  addDemoEvents();
+</script>
+</body>
+</html>

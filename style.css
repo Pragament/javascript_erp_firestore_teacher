@@ -51,3 +51,6 @@
 .psed-tag-lifeskills{background:#fff3cd;color:#856404}
 .event-tag{display:inline-block;font-size:0.7rem;padding:1px 4px;border-radius:3px;margin-right:2px}
 .calendar-empty-state{grid-column:1/-1;text-align:center;padding:40px;color:#6c757d}
+
+/* Event Classes Badge */
+.event-classes-badge{display:inline-block;font-size:0.65rem;background:rgba(0,0,0,0.1);border-radius:10px;padding:1px 6px;margin-left:4px}

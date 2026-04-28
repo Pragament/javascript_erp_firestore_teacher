@@ -60,12 +60,39 @@ const elements = {
     addEventBtn: document.getElementById('add-event-btn'),
     eventModal: document.getElementById('eventModal'),
     eventModalTitle: document.getElementById('event-modal-title'),
+    eventModalHeader: document.getElementById('event-modal-header'),
     eventIdInput: document.getElementById('event-id'),
-    eventTitleInput: document.getElementById('event-title'),
+    eventOriginalType: document.getElementById('event-original-type'),
+    eventType: document.getElementById('event-type'),
     eventDateInput: document.getElementById('event-date'),
     eventPeriodInput: document.getElementById('event-period'),
-    eventClassInput: document.getElementById('event-class'),
     eventDescriptionInput: document.getElementById('event-description'),
+    // Test-specific fields
+    testFields: document.getElementById('test-fields'),
+    testFrequency: document.getElementById('test-frequency'),
+    testMode: document.getElementById('test-mode'),
+    testCategory: document.getElementById('test-category'),
+    testSyllabus: document.getElementById('test-syllabus'),
+    testGradeExpectations: document.getElementById('test-grade-expectations'),
+    // Revision-specific fields
+    revisionFields: document.getElementById('revision-fields'),
+    revisionGroupType: document.getElementById('revision-group-type'),
+    revisionLocation: document.getElementById('revision-location'),
+    availabilityBlock: document.getElementById('availability-block'),
+    availMsg: document.getElementById('avail-msg'),
+    revisionSyllabus: document.getElementById('revision-syllabus'),
+    testRelation: document.getElementById('test-relation'),
+    revisionGradeExpect: document.getElementById('revision-grade-expect'),
+    // Common fields
+    eventClasses: document.getElementById('event-classes'),
+    eventSubjects: document.getElementById('event-subjects'),
+    eventChapters: document.getElementById('event-chapters'),
+    eventTopics: document.getElementById('event-topics'),
+    eventSubtopics: document.getElementById('event-subtopics'),
+    eventGroupActivity: document.getElementById('event-group-activity'),
+    isGroupActivity: document.getElementById('is-group-activity'),
+    // Tags and legacy fields
+    eventClassInput: document.getElementById('event-class'),
     eventPSEDTags: document.getElementById('event-psed-tags'),
     eventCustomTagsInput: document.getElementById('event-custom-tags'),
     saveEventBtn: document.getElementById('save-event-btn'),
@@ -973,9 +1000,29 @@ function renderCalendar() {
         dayEvents.forEach(event => {
             const eventClass = getEventStatusClass(event.date);
             const tagsHtml = event.psedTags?.map(tag => `<span class="event-tag psed-tag-${getPSEDTagCategory(tag)}">${tag}</span>`).join('') || '';
+
+            // Get event type and color
+            const eventType = event.eventType || event.type || 'test';
+            const borderColor =
+                eventType === 'test' ? '#dc2626' :
+                eventType === 'revision' ? '#16a34a' :
+                eventType === 'theory' ? '#2563eb' :
+                eventType === 'practical' ? '#7c3aed' : '#2c3e50';
+
+            // Get icon based on type
+            const typeIcon =
+                eventType === 'test' ? '📝' :
+                eventType === 'revision' ? '📖' :
+                eventType === 'theory' ? '🧠' :
+                eventType === 'practical' ? '🔬' : '📅';
+
+            // Get frequency info for tests
+            const freqInfo = eventType === 'test' && event.frequency ? ` (${event.frequency})` : '';
+
             html += `
-                <div class="calendar-event ${eventClass}" onclick="event.stopPropagation(); editEvent('${event.id}')">
-                    <strong>${escapeHtml(event.period)}</strong> ${escapeHtml(event.title)}
+                <div class="calendar-event ${eventClass}" onclick="event.stopPropagation(); editEvent('${event.id}')" style="border-left: 4px solid ${borderColor};">
+                    ${typeIcon} <strong>${escapeHtml(event.period || 'All Day')}</strong> ${escapeHtml(event.title)}${freqInfo}
+                    <span class="event-classes-badge">${escapeHtml(event.classes || '')}</span>
                     ${tagsHtml}
                 </div>
             `;
@@ -1049,19 +1096,84 @@ function togglePSEDTag(indicatorId) {
     }
 }
 
+// Toggle test/revision fields based on event type
+function toggleEventTypeFields(eventType) {
+    const testFields = elements.testFields;
+    const revisionFields = elements.revisionFields;
+    const modalHeader = elements.eventModalHeader;
+
+    if (testFields) testFields.style.display = eventType === 'test' ? 'block' : 'none';
+    if (revisionFields) revisionFields.style.display = eventType === 'revision' ? 'block' : 'none';
+
+    // Update modal header color based on event type
+    if (modalHeader) {
+        modalHeader.style.background =
+            eventType === 'test' ? '#dc2626' :
+            eventType === 'revision' ? '#16a34a' :
+            eventType === 'theory' ? '#2563eb' :
+            eventType === 'practical' ? '#7c3aed' : '#2c3e50';
+    }
+}
+
+// Update availability info for revision location
+function updateAvailabilityInfo(location, dateStr) {
+    const availBlock = elements.availabilityBlock;
+    const availMsg = elements.availMsg;
+
+    if (!availBlock || !availMsg || !location) return;
+
+    if (location.includes('Android touch TV room') || location.includes('Computer lab')) {
+        availBlock.style.display = 'block';
+        const dayOfWeek = new Date(dateStr).toLocaleDateString('en', { weekday: 'long' });
+        const isWeekend = dayOfWeek === 'Saturday' || dayOfWeek === 'Sunday';
+        availMsg.textContent = isWeekend
+            ? '⚠️ Limited availability on weekends'
+            : `✅ Available on ${dayOfWeek}: 8:00 - 16:00`;
+    } else {
+        availBlock.style.display = 'none';
+    }
+}
+
 // Open event modal (add new)
 function openEventModal(dateStr = null) {
     if (!elements.eventModal) return;
 
     // Reset form
     elements.eventIdInput.value = '';
-    elements.eventTitleInput.value = '';
+    elements.eventOriginalType.value = '';
+    elements.eventType.value = 'test';
     elements.eventDateInput.value = dateStr || new Date().toISOString().split('T')[0];
     elements.eventPeriodInput.value = '';
-    elements.eventClassInput.value = '';
     elements.eventDescriptionInput.value = '';
     elements.eventCustomTagsInput.value = '';
     selectedPSEDIndicators = [];
+
+    // Reset common fields
+    if (elements.eventClasses) elements.eventClasses.value = '';
+    if (elements.eventSubjects) elements.eventSubjects.value = '';
+    if (elements.eventChapters) elements.eventChapters.value = '';
+    if (elements.eventTopics) elements.eventTopics.value = '';
+    if (elements.eventSubtopics) elements.eventSubtopics.value = '';
+    if (elements.eventGroupActivity) elements.eventGroupActivity.value = '';
+    if (elements.isGroupActivity) elements.isGroupActivity.checked = false;
+
+    // Reset test-specific fields
+    if (elements.testFrequency) elements.testFrequency.value = 'Weekly tests';
+    if (elements.testMode) elements.testMode.value = 'OMR';
+    if (elements.testCategory) elements.testCategory.value = 'Closed book';
+    if (elements.testSyllabus) elements.testSyllabus.value = '';
+    if (elements.testGradeExpectations) elements.testGradeExpectations.value = '';
+
+    // Reset revision-specific fields
+    if (elements.revisionGroupType) elements.revisionGroupType.value = 'Group of students';
+    if (elements.revisionLocation) elements.revisionLocation.value = 'Homework';
+    if (elements.revisionSyllabus) elements.revisionSyllabus.value = '';
+    if (elements.testRelation) elements.testRelation.value = 'none';
+    if (elements.revisionGradeExpect) elements.revisionGradeExpect.value = '';
+    if (elements.availabilityBlock) elements.availabilityBlock.style.display = 'none';
+
+    // Show/hide type-specific fields
+    toggleEventTypeFields('test');
 
     // Reset tag styling
     elements.eventPSEDTags?.querySelectorAll('.psed-tag').forEach(tag => tag.classList.remove('selected'));
@@ -1080,12 +1192,46 @@ function editEvent(eventId) {
     if (!event || !elements.eventModal) return;
 
     elements.eventIdInput.value = event.id;
-    elements.eventTitleInput.value = event.title || '';
+    elements.eventOriginalType.value = event.eventType || event.type || 'test';
+    elements.eventType.value = event.eventType || event.type || 'test';
     elements.eventDateInput.value = event.date || '';
     elements.eventPeriodInput.value = event.period || '';
-    elements.eventClassInput.value = event.className || '';
     elements.eventDescriptionInput.value = event.description || '';
     elements.eventCustomTagsInput.value = event.customTags?.join(', ') || '';
+
+    // Set common fields
+    if (elements.eventClasses) elements.eventClasses.value = event.classes || event.className || '';
+    if (elements.eventSubjects) elements.eventSubjects.value = event.subjects || '';
+    if (elements.eventChapters) elements.eventChapters.value = event.chapters || '';
+    if (elements.eventTopics) elements.eventTopics.value = event.topics || '';
+    if (elements.eventSubtopics) elements.eventSubtopics.value = event.subtopics || '';
+    if (elements.eventGroupActivity) elements.eventGroupActivity.value = event.groupActivity || event.groupActivityText || '';
+    if (elements.isGroupActivity) elements.isGroupActivity.checked = event.isGroupActivity || false;
+
+    // Show/hide type-specific fields
+    const eventType = event.eventType || event.type || 'test';
+    toggleEventTypeFields(eventType);
+
+    // Set test-specific fields
+    if (eventType === 'test') {
+        if (elements.testFrequency) elements.testFrequency.value = event.frequency || event.testFrequency || 'Weekly tests';
+        if (elements.testMode) elements.testMode.value = event.testMode || 'OMR';
+        if (elements.testCategory) elements.testCategory.value = event.category || event.testCategory || 'Closed book';
+        if (elements.testSyllabus) elements.testSyllabus.value = event.testSyllabus || '';
+        if (elements.testGradeExpectations) elements.testGradeExpectations.value = event.gradeExpectations || event.testGradeExpectations || '';
+    }
+
+    // Set revision-specific fields
+    if (eventType === 'revision') {
+        if (elements.revisionGroupType) elements.revisionGroupType.value = event.revisionGroupType || 'Group of students';
+        if (elements.revisionLocation) elements.revisionLocation.value = event.revisionLocation || 'Homework';
+        if (elements.revisionSyllabus) elements.revisionSyllabus.value = event.revisionSyllabus || '';
+        if (elements.testRelation) elements.testRelation.value = event.testRelation || 'none';
+        if (elements.revisionGradeExpect) elements.revisionGradeExpect.value = event.revisionGradeExpect || '';
+        if (elements.revisionLocation && elements.eventDateInput) {
+            updateAvailabilityInfo(elements.revisionLocation.value, elements.eventDateInput.value);
+        }
+    }
 
     // Set PSED tags
     selectedPSEDIndicators = event.psedTags || [];
@@ -1170,22 +1316,64 @@ async function saveEvent() {
         return;
     }
 
+    const eventType = elements.eventType?.value || 'test';
+
+    // Build event title based on type and specific details
+    let eventTitle = '';
+    if (eventType === 'test') {
+        const frequency = elements.testFrequency?.value || 'Test';
+        const subjects = elements.eventSubjects?.value || '';
+        eventTitle = `${frequency}${subjects ? ' - ' + subjects : ''}`;
+    } else if (eventType === 'revision') {
+        const subjects = elements.eventSubjects?.value || '';
+        eventTitle = `Revision${subjects ? ' - ' + subjects : ''}`;
+    } else if (eventType === 'theory') {
+        const subjects = elements.eventSubjects?.value || '';
+        eventTitle = `Theory${subjects ? ' - ' + subjects : ''}`;
+    } else if (eventType === 'practical') {
+        const subjects = elements.eventSubjects?.value || '';
+        eventTitle = `Practical${subjects ? ' - ' + subjects : ''}`;
+    }
+
     const eventData = {
-        title: elements.eventTitleInput?.value?.trim(),
+        title: eventTitle,
+        eventType: eventType,
         date: elements.eventDateInput?.value,
         period: elements.eventPeriodInput?.value,
-        className: elements.eventClassInput?.value?.trim(),
         description: elements.eventDescriptionInput?.value?.trim(),
         psedTags: selectedPSEDIndicators,
         customTags: elements.eventCustomTagsInput?.value?.split(',').map(t => t.trim()).filter(t => t) || [],
         teacherEmail: currentUser.email,
         teacherName: teacherName || extractTeacherNameFromEmail(currentUser.email),
         schoolId: teacherSchoolId,
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        // Common fields
+        classes: elements.eventClasses?.value?.trim() || '',
+        subjects: elements.eventSubjects?.value?.trim() || '',
+        chapters: elements.eventChapters?.value?.trim() || '',
+        topics: elements.eventTopics?.value?.trim() || '',
+        subtopics: elements.eventSubtopics?.value?.trim() || '',
+        groupActivity: elements.eventGroupActivity?.value?.trim() || '',
+        isGroupActivity: elements.isGroupActivity?.checked || false
     };
 
-    if (!eventData.title || !eventData.date) {
-        alert('Please enter title and date');
+    // Add type-specific fields
+    if (eventType === 'test') {
+        eventData.frequency = elements.testFrequency?.value || '';
+        eventData.testMode = elements.testMode?.value || '';
+        eventData.category = elements.testCategory?.value || '';
+        eventData.testSyllabus = elements.testSyllabus?.value?.trim() || '';
+        eventData.gradeExpectations = elements.testGradeExpectations?.value?.trim() || '';
+    } else if (eventType === 'revision') {
+        eventData.revisionGroupType = elements.revisionGroupType?.value || '';
+        eventData.revisionLocation = elements.revisionLocation?.value || '';
+        eventData.revisionSyllabus = elements.revisionSyllabus?.value?.trim() || '';
+        eventData.testRelation = elements.testRelation?.value || 'none';
+        eventData.revisionGradeExpect = elements.revisionGradeExpect?.value?.trim() || '';
+    }
+
+    if (!eventData.date) {
+        alert('Please select a date');
         return;
     }
 
@@ -1306,4 +1494,23 @@ if (elements.eventDateInput) {
 }
 if (elements.eventPeriodInput) {
     elements.eventPeriodInput.addEventListener('change', autopopulateFromTimetable);
+}
+
+// Event type change - show/hide type-specific fields
+if (elements.eventType) {
+    elements.eventType.addEventListener('change', (e) => {
+        toggleEventTypeFields(e.target.value);
+        if (e.target.value === 'revision' && elements.revisionLocation) {
+            updateAvailabilityInfo(elements.revisionLocation.value, elements.eventDateInput?.value);
+        }
+    });
+}
+
+// Revision location change - update availability info
+if (elements.revisionLocation) {
+    elements.revisionLocation.addEventListener('change', (e) => {
+        if (elements.eventType?.value === 'revision') {
+            updateAvailabilityInfo(e.target.value, elements.eventDateInput?.value);
+        }
+    });
 }

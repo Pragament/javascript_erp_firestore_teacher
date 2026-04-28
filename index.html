@@ -100,18 +100,27 @@
 
             <!-- Event Modal -->
             <div class="modal fade" id="eventModal" tabindex="-1" aria-hidden="true">
-                <div class="modal-dialog">
+                <div class="modal-dialog modal-lg">
                     <div class="modal-content">
-                        <div class="modal-header bg-primary text-white">
+                        <div class="modal-header text-white" id="event-modal-header" style="background: #2c3e50;">
                             <h5 class="modal-title"><i class="bi bi-calendar-event me-2"></i><span id="event-modal-title">Add Event</span></h5>
                             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         <div class="modal-body">
                             <input type="hidden" id="event-id">
+                            <input type="hidden" id="event-original-type">
+
+                            <!-- Event Type -->
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Event Title</label>
-                                <input type="text" id="event-title" class="form-control" placeholder="Enter event title">
+                                <label class="form-label fw-semibold">Event Type</label>
+                                <select id="event-type" class="form-select">
+                                    <option value="test">📝 Test</option>
+                                    <option value="revision">📖 Revision</option>
+                                    <option value="theory">🧠 Theory</option>
+                                    <option value="practical">🔬 Practical</option>
+                                </select>
                             </div>
+
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <label class="form-label fw-semibold">Date</label>
@@ -135,14 +144,139 @@
                                     </select>
                                 </div>
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label fw-semibold">Class/Subject (Optional)</label>
-                                <input type="text" id="event-class" class="form-control" placeholder="e.g., Grade I-A, Mathematics">
+
+                            <!-- Test-Specific Fields -->
+                            <div id="test-fields" style="display:none;">
+                                <hr>
+                                <h6 class="text-danger fw-bold mb-3"><i class="bi bi-journal-check me-2"></i>Test Details</h6>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Test Frequency Type</label>
+                                        <select id="test-frequency" class="form-select">
+                                            <option>Daily tests</option>
+                                            <option>Weekly tests</option>
+                                            <option>Periodic Tests (PT-1)</option>
+                                            <option>Periodic Tests (PT-2)</option>
+                                            <option>Periodic Tests (PT-3)</option>
+                                            <option>Half-Yearly / Mid-Term Exam</option>
+                                            <option>Annual Exam (Final)</option>
+                                            <option>Olympiad monthly</option>
+                                            <option>IIT twice a month</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Test Mode</label>
+                                        <select id="test-mode" class="form-select">
+                                            <option>Android touch TV</option>
+                                            <option>Computer lab</option>
+                                            <option>OMR</option>
+                                            <option>Paper - manual marks entry</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Category</label>
+                                        <select id="test-category" class="form-select">
+                                            <option>Open book</option>
+                                            <option>Closed book</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Syllabus Details (Class, Subject, Chapter, Topic, Subtopic)</label>
+                                    <textarea id="test-syllabus" class="form-control" rows="2" placeholder="e.g., Class 10A, Science, Ch5, Photosynthesis, Light reaction"></textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Per Student Grade Expectations (bulk entry)</label>
+                                    <textarea id="test-grade-expectations" class="form-control" rows="2" placeholder="Student: Grade expectation, e.g., Riya:85%, John:92% or 'All above 80%'"></textarea>
+                                </div>
+                            </div>
+
+                            <!-- Revision-Specific Fields -->
+                            <div id="revision-fields" style="display:none;">
+                                <hr>
+                                <h6 class="text-success fw-bold mb-3"><i class="bi bi-book me-2"></i>Revision Details</h6>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Revision Type</label>
+                                        <select id="revision-group-type" class="form-select">
+                                            <option>Single student</option>
+                                            <option>Group of students</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Revision Location</label>
+                                        <select id="revision-location" class="form-select">
+                                            <option>Homework</option>
+                                            <option>School - Android touch TV room</option>
+                                            <option>School - Computer lab</option>
+                                            <option>School - Generic</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div id="availability-block" class="alert alert-info py-2" style="display:none;">
+                                    <i class="bi bi-geo-alt me-2"></i><strong>Availability:</strong> <span id="avail-msg"></span>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Revision Syllabus (different for students)</label>
+                                    <textarea id="revision-syllabus" class="form-control" rows="2" placeholder="Different syllabus per student/group: class 9: Trigonometry, class 10: Algebra"></textarea>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Test Relation</label>
+                                        <select id="test-relation" class="form-select">
+                                            <option value="none">None</option>
+                                            <option value="before">Before revision test (optional)</option>
+                                            <option value="after">After revision test (mandatory)</option>
+                                            <option value="both">Both before & after</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Teacher Expectations (per student grade target)</label>
+                                    <textarea id="revision-grade-expect" class="form-control" rows="2" placeholder="Per student grade target..."></textarea>
+                                </div>
+                            </div>
+
+                            <!-- Common Fields (All Events) -->
+                            <hr>
+                            <h6 class="fw-bold mb-3"><i class="bi bi-info-circle me-2"></i>Common Details</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">Class(es)</label>
+                                    <input type="text" id="event-classes" class="form-control" placeholder="e.g., 10A, 10B">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">Subject(s)</label>
+                                    <input type="text" id="event-subjects" class="form-control" placeholder="Mathematics, Physics">
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">Chapter(s)</label>
+                                    <input type="text" id="event-chapters" class="form-control" placeholder="Chapter 3,4">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label fw-semibold">Topic(s)</label>
+                                    <input type="text" id="event-topics" class="form-control" placeholder="Calculus, Derivatives">
+                                </div>
                             </div>
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Description</label>
-                                <textarea id="event-description" class="form-control" rows="2" placeholder="Event details..."></textarea>
+                                <label class="form-label fw-semibold">Subtopic(s)</label>
+                                <input type="text" id="event-subtopics" class="form-control" placeholder="Chain rule">
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Group Activity Description</label>
+                                <input type="text" id="event-group-activity" class="form-control" placeholder="e.g., Group project / Mixed class activity">
+                            </div>
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" id="is-group-activity" class="form-check-input">
+                                <label class="form-check-label fw-semibold" for="is-group-activity">Group activity (test after activity)</label>
+                            </div>
+
+                            <!-- PSED Tags -->
+                            <hr>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">PSED Indicator Tags</label>
                                 <div id="event-psed-tags" class="d-flex flex-wrap gap-2">
@@ -152,6 +286,12 @@
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Custom Tags</label>
                                 <input type="text" id="event-custom-tags" class="form-control" placeholder="Add tags separated by commas (e.g., exam, meeting, project)">
+                            </div>
+
+                            <!-- Description -->
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Description</label>
+                                <textarea id="event-description" class="form-control" rows="2" placeholder="Additional event details..."></textarea>
                             </div>
                         </div>
                         <div class="modal-footer">
