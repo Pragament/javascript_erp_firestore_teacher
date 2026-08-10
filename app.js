@@ -233,14 +233,14 @@ function setCurrentSection(sectionId) {
 function renderSectionSwitcher() {
     if (!elements.sectionSwitcher || !elements.sectionSelect) return;
 
-    if (availableSections.length <= 1) {
+    if (availableSections.length === 0) {
         elements.sectionSwitcher.classList.add('d-none');
         elements.sectionSelect.innerHTML = '';
         return;
     }
 
     elements.sectionSelect.innerHTML = availableSections.map((section) => `
-        <option value="${section.id}">${section.name}</option>
+        <option value="${section.id}">${section.name || section.id}</option>
     `).join('');
     elements.sectionSelect.value = currentSectionId;
     elements.sectionSwitcher.classList.remove('d-none');
@@ -248,6 +248,74 @@ function renderSectionSwitcher() {
 
 function getTestResultsPageUrl(testId) {
     return `test-results.html?testId=${encodeURIComponent(testId)}&sectionId=${encodeURIComponent(currentSectionId)}`;
+}
+
+function getSubjectResultsPageUrl(testId, subjectId) {
+    return `${getTestResultsPageUrl(testId)}&subjectId=${encodeURIComponent(subjectId)}`;
+}
+
+function getQuestionSubject(question) {
+    return String(question?.Subject || question?.subject || question?.section || question?.subjectName || '').trim();
+}
+
+function getAvailableSubjectsForTest(test, questionPaper) {
+    const questions = questionPaper?.questions || test?.questions || [];
+    const subjects = new Map();
+
+    questions.forEach((question) => {
+        const subject = getQuestionSubject(question);
+        const key = subject.toLowerCase();
+        if (key && !subjects.has(key)) {
+            subjects.set(key, subject);
+        }
+    });
+
+    return Array.from(subjects.values()).sort((a, b) => a.localeCompare(b));
+}
+
+async function fetchQuestionPaper(questionPaperID) {
+    if (!questionPaperID) return null;
+
+    const querySnap = await firestore
+        .collection('questionpapers')
+        .where('questionPaperID', '==', questionPaperID)
+        .limit(1)
+        .get();
+
+    if (!querySnap.empty) {
+        const doc = querySnap.docs[0];
+        return { id: doc.id, ...doc.data() };
+    }
+
+    const docSnap = await firestore.collection('questionpapers').doc(questionPaperID).get();
+    return docSnap.exists ? { id: docSnap.id, ...docSnap.data() } : null;
+}
+
+async function getSubjectButtonsHtml(testId, test) {
+    try {
+        const questionPaper = await fetchQuestionPaper(test.questionPaperID);
+        const subjects = getAvailableSubjectsForTest(test, questionPaper);
+
+        if (subjects.length === 0) return '';
+
+        return `
+            <div class="subject-result-actions mt-3">
+                <div class="small text-muted mb-2">Subject results</div>
+                <div class="d-flex flex-wrap gap-2">
+                    ${subjects.map((subject) => `
+                        <a class="btn btn-sm btn-outline-success"
+                           href="${getSubjectResultsPageUrl(testId, subject)}"
+                           target="_blank">
+                            <i class="bi bi-grid-3x3-gap me-1"></i>${escapeHtml(subject)} Results
+                        </a>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Load subject result buttons:', error);
+        return '';
+    }
 }
 
 // Check if teacher exists in any school's teachers collection
@@ -281,14 +349,91 @@ async function checkTeacherInSchools(email) {
     }
 }
 
+// Fetch sections from all schools' classSections and sections array
+async function fetchSectionsFromSchoolSectionId() {
+    try {
+        const sectionsMap = new Map();
+
+        // Get all schools
+        const schoolsSnapshot = await firestore.collection('schools').get();
+
+        for (const schoolDoc of schoolsSnapshot.docs) {
+            const schoolId = schoolDoc.id;
+            const schoolData = schoolDoc.data();
+
+            // 1. Fetch from classSections subcollection
+            const classSectionsSnapshot = await firestore.collection('schools')
+                .doc(schoolId)
+                .collection('classSections')
+                .get();
+
+            for (const classSectionDoc of classSectionsSnapshot.docs) {
+                const classSectionData = classSectionDoc.data();
+                const schoolSectionId = classSectionData?.schoolSectionId;
+
+                if (schoolSectionId && !sectionsMap.has(schoolSectionId)) {
+                    // Try to get section name from the sections collection
+                    const sectionDoc = await firestore.collection('sections').doc(schoolSectionId).get();
+                    let sectionName = schoolSectionId;
+
+                    if (sectionDoc.exists) {
+                        const sectionData = sectionDoc.data();
+                        sectionName = sectionData?.name
+                            || sectionData?.sectionName
+                            || sectionData?.className
+                            || sectionData?.classSectionName
+                            || sectionData?.title
+                            || sectionData?.displayName
+                            || schoolSectionId;
+                    }
+
+                    sectionsMap.set(schoolSectionId, {
+                        id: schoolSectionId,
+                        name: sectionName,
+                        schoolId: schoolId
+                    });
+                }
+            }
+
+            // 2. Fetch from school's sections array
+            const sectionsArray = schoolData?.sections;
+            if (Array.isArray(sectionsArray)) {
+                for (const sectionItem of sectionsArray) {
+                    const sectionId = sectionItem?.sectionId;
+                    const sectionName = sectionItem?.sectionName || sectionItem?.name || sectionId;
+
+                    if (sectionId && !sectionsMap.has(sectionId)) {
+                        sectionsMap.set(sectionId, {
+                            id: sectionId,
+                            name: sectionName,
+                            schoolId: schoolId
+                        });
+                    }
+                }
+            }
+        }
+
+        const sections = Array.from(sectionsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+        console.log('[DEBUG] Fetched sections from all schools:', sections);
+        return sections;
+    } catch (error) {
+        console.error('[DEBUG] Error fetching sections from schools:', error);
+        return [];
+    }
+}
+
 // Get teacher's assigned sections
 async function loadAssignedSections() {
     try {
+        // First, fetch sections from the specific schoolSectionId path
+        const schoolSections = await fetchSectionsFromSchoolSectionId();
+        console.log('[DEBUG] Sections from schoolSectionId:', schoolSections);
+
         const snapshot = await firestore.collection('teacherAssignments')
             .where('teacherEmail', '==', currentUser.email)
             .get();
 
-        if (snapshot.empty) {
+        if (snapshot.empty && schoolSections.length === 0) {
             // Check if teacher exists in schools/{schoolId}/teachers collection
             const schoolCheck = await checkTeacherInSchools(currentUser.email);
 
@@ -321,10 +466,32 @@ async function loadAssignedSections() {
             return;
         }
 
-        availableSections = normalizeAssignedSections(snapshot);
-        console.log('[DEBUG] availableSections after normalize:', availableSections);
+        // Combine sections from both sources
+        const assignmentSections = snapshot.empty ? [] : normalizeAssignedSections(snapshot);
+
+        // Merge sections, avoiding duplicates (prefer assignment sections if same ID)
+        const sectionMap = new Map();
+
+        // Add schoolSections first
+        schoolSections.forEach(section => {
+            sectionMap.set(section.id, section);
+        });
+
+        // Add assignment sections (will overwrite if duplicate, keeping schoolId from assignments if present)
+        assignmentSections.forEach(section => {
+            sectionMap.set(section.id, section);
+        });
+
+        availableSections = Array.from(sectionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+        console.log('[DEBUG] availableSections after merge:', availableSections);
+
         setCurrentSection(currentSectionId || availableSections[0]?.id || null);
         renderSectionSwitcher();
+
+        // Show section-info if sections are available
+        if (elements.sectionInfo) {
+            elements.sectionInfo.classList.toggle('d-none', availableSections.length === 0);
+        }
     } catch (error) {
         console.error('Get section:', error);
         elements.sectionName.textContent = 'Error loading section';
@@ -359,6 +526,7 @@ async function loadTests() {
         for (const doc of sortedDocs) {
             const test = doc.data();
             const resultCount = await getResultCount(doc.id);
+            const subjectButtonsHtml = await getSubjectButtonsHtml(doc.id, test);
 
             // Format test date
             const testDateObj = test.testDate?.toDate?.() || new Date(test.testDate || null);
@@ -377,6 +545,7 @@ async function loadTests() {
                        target="_blank">
                         <i class="bi bi-eye me-2"></i>View Student Results
                     </a>
+                    ${subjectButtonsHtml}
                 </div>
             `;
         }
