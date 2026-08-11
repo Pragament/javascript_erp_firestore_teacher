@@ -580,6 +580,7 @@ ${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone
       testName: test.testName || result.testName || testId || "Test",
       testDateRaw: test.testDate || "",
       dateObj,
+      classValue: normalizeFilterValue(test.class || test.className || test.grade || test.standard || result.class || result.grade),
       percent: scoreDetails.percent,
       correct: scoreDetails.correct,
       total: scoreDetails.total,
@@ -3086,6 +3087,7 @@ function buildStudentProgressChapterTopicSubtopicSummary(rows) {
 
   rows.forEach((row) => {
     (row.questionRecords || []).forEach((record) => {
+      const subject = normalizeFilterValue(record.subject);
       const chapter = normalizeFilterValue(record.chapter);
       const topic = normalizeFilterValue(record.topic);
       const subtopic = normalizeFilterValue(record.subtopic);
@@ -3093,10 +3095,11 @@ function buildStudentProgressChapterTopicSubtopicSummary(rows) {
       // Only include if chapter is available
       if (!chapter) return;
 
-      const key = `${chapter}|${topic}|${subtopic}`;
+      const key = `${subject}|${chapter}|${topic}|${subtopic}`;
 
       if (!ctsMap.has(key)) {
         ctsMap.set(key, {
+          subject,
           chapter,
           topic,
           subtopic,
@@ -3154,6 +3157,7 @@ function buildStudentProgressChapterTopicSubtopicSummary(rows) {
       const totalQuestions = testResults.reduce((sum, tr) => sum + tr.total, 0);
 
       return {
+        subject: entry.subject,
         chapter: entry.chapter,
         topic: entry.topic,
         subtopic: entry.subtopic,
@@ -3170,9 +3174,9 @@ function buildStudentProgressChapterTopicSubtopicSummary(rows) {
       };
     })
     .sort((a, b) => {
-      // Sort by chapter, then topic, then subtopic
-      const aKey = `${a.chapter}|${a.topic}|${a.subtopic}`;
-      const bKey = `${b.chapter}|${b.topic}|${b.subtopic}`;
+      // Sort by subject, chapter, topic, then subtopic
+      const aKey = `${a.subject}|${a.chapter}|${a.topic}|${a.subtopic}`;
+      const bKey = `${b.subject}|${b.chapter}|${b.topic}|${b.subtopic}`;
       return aKey.localeCompare(bKey);
     });
 }
@@ -3231,6 +3235,7 @@ function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary, hideNoErrors
       const hasErrors = entry.wrong + entry.skipped > 0;
     return `
     <tr data-has-errors="${hasErrors}">
+      <td>${escapeHtml(entry.subject || "—")}</td>
       <td>${escapeHtml(entry.chapter)}</td>
       <td>${escapeHtml(entry.topic || "—")}</td>
       <td>${escapeHtml(entry.subtopic || "—")}</td>
@@ -3258,6 +3263,7 @@ function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary, hideNoErrors
       <table id="ctsProgressTable" class="table table-sm align-middle mb-0">
         <thead>
           <tr>
+            <th>Subject</th>
             <th>Chapter</th>
             <th>Topic</th>
             <th>Subtopic</th>
@@ -3274,6 +3280,310 @@ function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary, hideNoErrors
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
+    </div>
+  `;
+}
+
+function getProgressYearLabel(row) {
+  const year = row?.dateObj?.getFullYear?.();
+  return Number.isFinite(year) ? String(year) : "Unknown";
+}
+
+function getProgressClassLabel(row) {
+  return row?.classValue || "Unspecified";
+}
+
+function buildStudentProgressPromptData(student, rows, subjectSummary, ctsSummary) {
+  const studentName = student?.name || "Student";
+
+  const testsCSV = rowsToCSV([
+    ["Student", "Date", "Year", "Grade_Class", "Test", "Total_Percent", "Correct", "Total", "Subjects"],
+    ...rows.map((row) => [
+      studentName,
+      formatDate(row.dateObj, row.testDateRaw),
+      getProgressYearLabel(row),
+      getProgressClassLabel(row),
+      row.testName,
+      Number(row.percent) || 0,
+      typeof row.correct === "number" ? row.correct : "",
+      typeof row.total === "number" ? row.total : "",
+      (row.subjectStats || []).map((subject) => subject.subject).join(" | "),
+    ]),
+  ]);
+
+  const subjectTimelineCSV = rowsToCSV([
+    ["Student", "Date", "Year", "Grade_Class", "Test", "Subject", "Percent", "Correct", "Wrong", "Skipped", "Total", "Score"],
+    ...rows.flatMap((row) => (row.subjectStats || []).map((subject) => [
+      studentName,
+      formatDate(row.dateObj, row.testDateRaw),
+      getProgressYearLabel(row),
+      getProgressClassLabel(row),
+      row.testName,
+      subject.subject,
+      Number(subject.marks) || 0,
+      subject.correct,
+      subject.wrong,
+      subject.skipped,
+      subject.total,
+      formatScoreDisplay(subject),
+    ])),
+  ]);
+
+  const topicSubtopicCSV = rowsToCSV([
+    ["Subject", "Chapter", "Topic", "Subtopic", "Tests", "Correct", "Wrong", "Skipped", "Questions", "Average_Percent", "Best_Percent", "Latest_Percent", "Trend_Percent"],
+    ...ctsSummary.map((entry) => [
+      entry.subject,
+      entry.chapter,
+      entry.topic,
+      entry.subtopic,
+      entry.testsTaken,
+      entry.correct,
+      entry.wrong,
+      entry.skipped,
+      entry.totalQuestions,
+      entry.averagePercent.toFixed(1),
+      entry.bestPercent.toFixed(1),
+      entry.latestPercent.toFixed(1),
+      entry.improvement.toFixed(1),
+    ]),
+  ]);
+
+  const questionAttemptsCSV = rowsToCSV([
+    ["Student", "Date", "Year", "Grade_Class", "Test", "Subject", "Chapter", "Topic", "Subtopic", "Question_No", "Status"],
+    ...rows.flatMap((row) => (row.questionRecords || []).map((record) => [
+      studentName,
+      formatDate(row.dateObj, row.testDateRaw),
+      getProgressYearLabel(row),
+      getProgressClassLabel(row),
+      row.testName,
+      record.subject,
+      record.chapter,
+      record.topic,
+      record.subtopic,
+      record.questionNumber,
+      record.status,
+    ])),
+  ]);
+
+  const subjectGradeYearMap = new Map();
+  rows.forEach((row) => {
+    (row.subjectStats || []).forEach((subject) => {
+      const key = `${subject.subject}|${getProgressYearLabel(row)}|${getProgressClassLabel(row)}`;
+      if (!subjectGradeYearMap.has(key)) {
+        subjectGradeYearMap.set(key, {
+          subject: subject.subject,
+          year: getProgressYearLabel(row),
+          classValue: getProgressClassLabel(row),
+          tests: 0,
+          correct: 0,
+          wrong: 0,
+          skipped: 0,
+          total: 0,
+          percentSum: 0,
+        });
+      }
+      const entry = subjectGradeYearMap.get(key);
+      entry.tests += 1;
+      entry.correct += subject.correct;
+      entry.wrong += subject.wrong;
+      entry.skipped += subject.skipped;
+      entry.total += subject.total;
+      entry.percentSum += Number(subject.marks) || 0;
+    });
+  });
+
+  const subjectGradeYearCSV = rowsToCSV([
+    ["Student", "Subject", "Year", "Grade_Class", "Tests", "Correct", "Wrong", "Skipped", "Questions", "Average_Percent"],
+    ...Array.from(subjectGradeYearMap.values()).map((entry) => [
+      studentName,
+      entry.subject,
+      entry.year,
+      entry.classValue,
+      entry.tests,
+      entry.correct,
+      entry.wrong,
+      entry.skipped,
+      entry.total,
+      entry.tests ? (entry.percentSum / entry.tests).toFixed(1) : "0.0",
+    ]),
+  ]);
+
+  const weakPrerequisiteCSV = rowsToCSV([
+    ["Subject", "Chapter", "Topic", "Subtopic", "Wrong", "Skipped", "Questions", "Average_Percent", "Latest_Percent", "Trend_Percent", "Prerequisite_Reason"],
+    ...ctsSummary
+      .filter((entry) => entry.wrong + entry.skipped > 0 || entry.averagePercent < 70 || entry.latestPercent < 70)
+      .sort((a, b) => {
+        if ((b.wrong + b.skipped) !== (a.wrong + a.skipped)) return (b.wrong + b.skipped) - (a.wrong + a.skipped);
+        return a.averagePercent - b.averagePercent;
+      })
+      .map((entry) => [
+        entry.subject,
+        entry.chapter,
+        entry.topic,
+        entry.subtopic,
+        entry.wrong,
+        entry.skipped,
+        entry.totalQuestions,
+        entry.averagePercent.toFixed(1),
+        entry.latestPercent.toFixed(1),
+        entry.improvement.toFixed(1),
+        "Treat this as a prerequisite gap if later topics in the same subject depend on it.",
+      ]),
+  ]);
+
+  return {
+    testsCSV,
+    subjectTimelineCSV,
+    topicSubtopicCSV,
+    questionAttemptsCSV,
+    subjectGradeYearCSV,
+    weakPrerequisiteCSV,
+  };
+}
+
+function buildStudentProgressPromptCardsHtml(student, rows, subjectSummary, ctsSummary) {
+  const promptData = buildStudentProgressPromptData(student, rows, subjectSummary, ctsSummary);
+  const prompts = [
+    {
+      id: "longTermTrend",
+      title: "Long-Term Progress Trend",
+      data: promptData.testsCSV,
+      intro: "I have a multi-test student progress CSV with columns: Student, Date, Year, Grade_Class, Test, Total_Percent, Correct, Total, Subjects.",
+      tasks: [
+        "Analyze progress across all tests, years, and grade/classes.",
+        "Identify improving, declining, and inconsistent periods.",
+        "Find tests that look like turning points.",
+        "Give a practical 30-day improvement plan.",
+      ],
+    },
+    {
+      id: "subjectContinuity",
+      title: "Same-Subject Continuity",
+      data: promptData.subjectTimelineCSV,
+      intro: "I have subject-wise progress across multiple tests with columns: Student, Date, Year, Grade_Class, Test, Subject, Percent, Correct, Wrong, Skipped, Total, Score.",
+      tasks: [
+        "Compare the same subjects across tests and years.",
+        "Identify subjects with stable mastery versus recurring weakness.",
+        "Explain whether the student is improving within each subject.",
+        "Recommend subject-specific revision priorities.",
+      ],
+    },
+    {
+      id: "gradeYearTransitions",
+      title: "Grade/Year Transition Gaps",
+      data: promptData.subjectGradeYearCSV,
+      intro: "I have progress aggregated by subject, year, and grade/class with columns: Student, Subject, Year, Grade_Class, Tests, Correct, Wrong, Skipped, Questions, Average_Percent.",
+      tasks: [
+        "Compare performance across years and grade/classes.",
+        "Identify subjects that dropped after a grade/year transition.",
+        "Suggest bridge topics to review before advancing.",
+        "Create a transition recovery plan.",
+      ],
+    },
+    {
+      id: "topicSubtopicMastery",
+      title: "Topic/Subtopic Mastery",
+      data: promptData.topicSubtopicCSV,
+      intro: "I have chapter/topic/subtopic progress across repeated tests with columns: Subject, Chapter, Topic, Subtopic, Tests, Correct, Wrong, Skipped, Questions, Average_Percent, Best_Percent, Latest_Percent, Trend_Percent.",
+      tasks: [
+        "Rank topics and subtopics from weakest to strongest.",
+        "Separate conceptual gaps from carelessness patterns where possible.",
+        "Identify repeated weak subtopics that block future learning.",
+        "Suggest targeted practice for each weak topic.",
+      ],
+    },
+    {
+      id: "prerequisiteMap",
+      title: "Prerequisite Gap Map",
+      data: promptData.weakPrerequisiteCSV,
+      intro: "I have weak prerequisite candidates with columns: Subject, Chapter, Topic, Subtopic, Wrong, Skipped, Questions, Average_Percent, Latest_Percent, Trend_Percent, Prerequisite_Reason.",
+      tasks: [
+        "Infer prerequisite relationships within each subject.",
+        "Identify foundational topics that should be fixed first.",
+        "Build a dependency-ordered revision path from basics to advanced topics.",
+        "Warn where later topics may remain weak until prerequisites improve.",
+      ],
+    },
+    {
+      id: "questionAttempts",
+      title: "Question Attempt Pattern",
+      data: promptData.questionAttemptsCSV,
+      intro: "I have question-level attempts across tests with columns: Student, Date, Year, Grade_Class, Test, Subject, Chapter, Topic, Subtopic, Question_No, Status.",
+      tasks: [
+        "Find patterns in wrong versus skipped questions over time.",
+        "Identify chapters/topics where the student avoids attempting questions.",
+        "Recommend test-taking strategies and practice formats.",
+        "List the most urgent question clusters to revisit.",
+      ],
+    },
+    {
+      id: "studentActionPlan",
+      title: "Student Study Plan",
+      data: [promptData.subjectTimelineCSV, "", promptData.topicSubtopicCSV].join("\n"),
+      intro: "I have subject timeline data and chapter/topic/subtopic data for a student across multiple tests.",
+      tasks: [
+        "Create a weekly study plan that balances weak subjects and repeated prerequisite gaps.",
+        "Include daily practice targets, revision blocks, and checkpoint tests.",
+        "Keep the plan realistic for a school student.",
+        "Prioritize long-term improvement over one-test cramming.",
+      ],
+    },
+    {
+      id: "parentTeacherSummary",
+      title: "Parent/Teacher Summary",
+      data: [promptData.testsCSV, "", promptData.subjectGradeYearCSV, "", promptData.weakPrerequisiteCSV].join("\n"),
+      intro: "I have multi-year progress, subject/year aggregates, and weak prerequisite candidates for one student.",
+      tasks: [
+        "Write a concise parent-friendly progress summary.",
+        "Write a teacher action summary with interventions.",
+        "Highlight strengths, risks, and next measurable goals.",
+        "Avoid blaming language and focus on improvement steps.",
+      ],
+    },
+  ];
+
+  return `
+    <div class="ai-report-prompts mb-4 no-print">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+          <div>
+            <h6 class="fw-bold mb-1">AI Progress Prompts</h6>
+            <p class="text-muted small mb-0">Copy a prompt with multi-test progress data for long-term improvement planning.</p>
+          </div>
+        </div>
+        <div class="ai-report-prompt-list">
+          ${prompts.map((item) => {
+            const targetId = `studentProgressPrompt${item.id}`;
+            const prompt = [
+              item.intro,
+              "",
+              "Analyze this data and:",
+              ...item.tasks.map((task, index) => `${index + 1}. ${task}`),
+              "",
+              "CSV content:",
+              item.data,
+            ].join("\n");
+            const preview = prompt.split("\n").slice(0, 5).join("\n");
+            return `
+              <details class="ai-report-prompt">
+                <summary>
+                  <div class="ai-report-prompt-summary">
+                    <div>
+                      <div class="fw-semibold">${escapeHtml(item.title)}</div>
+                      <pre class="ai-report-prompt-preview">${escapeHtml(preview)}</pre>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ai-copy-prompt-btn" data-copy-target="${targetId}">
+                      <i class="bi bi-clipboard"></i> Copy Prompt
+                    </button>
+                  </div>
+                </summary>
+                <div class="ai-report-prompt-body">
+                  <label class="form-label small text-muted" for="${targetId}">${escapeHtml(item.title)} with data</label>
+                  <textarea id="${targetId}" class="form-control ai-report-prompt-text" rows="12" readonly>${escapeHtml(prompt)}</textarea>
+                </div>
+              </details>
+            `;
+          }).join("")}
+        </div>
     </div>
   `;
 }
@@ -3552,6 +3862,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
             <i class="bi bi-download"></i> Export Excel
           </button>
         </div>
+        ${buildStudentProgressPromptCardsHtml(student, rows, subjectSummary, ctsSummary)}
         <div class="table-responsive">
           <table id="testsTable" class="table table-striped align-middle">
             <thead>
@@ -3577,6 +3888,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
   initResultsTable();
   initCTSProgressTable(ctsSummary);
   initProgressCSVExport(studentId, rows, student.name);
+  initReportPromptCopyButtons();
 }
 
 function initCTSProgressTable(ctsSummary) {
@@ -3598,18 +3910,19 @@ function initCTSProgressTable(ctsSummary) {
       fixedHeight: true,
       perPage: 10,
       columns: [
-        { select: 0, sort: "asc" }, // Chapter
-        { select: 1, sort: "asc" }, // Topic
-        { select: 2, sort: "asc" }, // Subtopic
-        { select: 3, type: "number", sort: "desc" }, // Tests
-        { select: 4, type: "number", sort: "desc" }, // Correct
-        { select: 5, type: "number", sort: "desc" }, // Wrong
-        { select: 6, type: "number", sort: "desc" }, // Skipped
-        { select: 7, type: "number", sort: "desc" }, // Questions
-        { select: 8, type: "number", sort: "desc" }, // Average
-        { select: 9, type: "number", sort: "desc" }, // Best
-        { select: 10, type: "number", sort: "desc" }, // Latest
-        { select: 11, type: "number", sort: "desc" }, // Trend
+        { select: 0, sort: "asc" }, // Subject
+        { select: 1, sort: "asc" }, // Chapter
+        { select: 2, sort: "asc" }, // Topic
+        { select: 3, sort: "asc" }, // Subtopic
+        { select: 4, type: "number", sort: "desc" }, // Tests
+        { select: 5, type: "number", sort: "desc" }, // Correct
+        { select: 6, type: "number", sort: "desc" }, // Wrong
+        { select: 7, type: "number", sort: "desc" }, // Skipped
+        { select: 8, type: "number", sort: "desc" }, // Questions
+        { select: 9, type: "number", sort: "desc" }, // Average
+        { select: 10, type: "number", sort: "desc" }, // Best
+        { select: 11, type: "number", sort: "desc" }, // Latest
+        { select: 12, type: "number", sort: "desc" }, // Trend
       ],
     });
   }
