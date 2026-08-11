@@ -102,6 +102,27 @@ function renderRichText(value, fallback = "") {
   return escapeHtml(fallback);
 }
 
+function plainTextFromRichHtml(value) {
+  const raw = normalizeText(value);
+  if (!raw) return "";
+
+  const template = document.createElement("template");
+  template.innerHTML = sanitizeRichHtml(raw);
+  return (template.content.textContent || raw).replace(/\s+/g, " ").trim();
+}
+
+function escapeCSV(value) {
+  const str = String(value ?? "");
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function rowsToCSV(rows) {
+  return rows.map((row) => row.map(escapeCSV).join(",")).join("\n");
+}
+
 function showError(message) {
   subtitleEl.textContent = message;
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
@@ -522,6 +543,235 @@ function renderQuestionDetailModal(question) {
   document.body.appendChild(overlay);
 }
 
+function buildSubjectTeacherPromptData(test, subjectId, questions, sortedResults, studentById) {
+  const testName = test?.testName || "Test";
+  const studentSummaries = [];
+  const questionSummaries = questions.map((question) => ({
+    question,
+    correct: 0,
+    wrong: 0,
+    skipped: 0,
+  }));
+
+  const detailRows = [
+    ["Test", "Subject", "Student", "Roll", "Question_No", "Chapter", "Topic", "Subtopic", "Question", "Status", "Correct_Answer"],
+  ];
+
+  sortedResults.forEach((result) => {
+    const student = studentById.get(result.studentId);
+    const studentName = student?.name || result.name || "Unknown";
+    const roll = getRollNumber(student, result);
+    let rightCount = 0;
+    let wrongCount = 0;
+    let skippedCount = 0;
+
+    questions.forEach((question, questionIndex) => {
+      const status = findResultStatus(result, question);
+      const statusLabel = isRightStatus(status) ? "Correct" : isSkippedStatus(status) ? "Skipped" : "Wrong";
+      const correctAnswer = question.correctOption
+        ? `${question.correctOption}. ${plainTextFromRichHtml(question.options[question.correctOption - 1] || "")}`.trim()
+        : "";
+
+      if (isRightStatus(status)) {
+        rightCount += 1;
+        questionSummaries[questionIndex].correct += 1;
+      } else if (isSkippedStatus(status)) {
+        skippedCount += 1;
+        questionSummaries[questionIndex].skipped += 1;
+      } else {
+        wrongCount += 1;
+        questionSummaries[questionIndex].wrong += 1;
+      }
+
+      detailRows.push([
+        testName,
+        subjectId,
+        studentName,
+        roll,
+        question.questionNumber,
+        question.chapter,
+        question.topic,
+        question.subtopic,
+        plainTextFromRichHtml(question.questionText),
+        statusLabel,
+        correctAnswer,
+      ]);
+    });
+
+    const total = rightCount + wrongCount + skippedCount;
+    studentSummaries.push({
+      studentName,
+      roll,
+      rightCount,
+      wrongCount,
+      skippedCount,
+      total,
+      accuracy: total ? Math.round((rightCount / total) * 100) : 0,
+    });
+  });
+
+  const studentSummaryCSV = rowsToCSV([
+    ["Test", "Subject", "Student", "Roll", "Total_Correct", "Total_Wrong", "Total_Skipped", "Questions", "Accuracy_Percent"],
+    ...studentSummaries.map((row) => [
+      testName,
+      subjectId,
+      row.studentName,
+      row.roll,
+      row.rightCount,
+      row.wrongCount,
+      row.skippedCount,
+      row.total,
+      row.accuracy,
+    ]),
+  ]);
+
+  const questionSummaryCSV = rowsToCSV([
+    ["Test", "Subject", "Question_No", "Chapter", "Topic", "Subtopic", "Correct", "Wrong", "Skipped", "Questions", "Accuracy_Percent", "Question"],
+    ...questionSummaries.map((row) => {
+      const total = row.correct + row.wrong + row.skipped;
+      const accuracy = total ? Math.round((row.correct / total) * 100) : 0;
+      return [
+        testName,
+        subjectId,
+        row.question.questionNumber,
+        row.question.chapter,
+        row.question.topic,
+        row.question.subtopic,
+        row.correct,
+        row.wrong,
+        row.skipped,
+        total,
+        accuracy,
+        plainTextFromRichHtml(row.question.questionText),
+      ];
+    }),
+  ]);
+
+  return {
+    detailCSV: rowsToCSV(detailRows),
+    studentSummaryCSV,
+    questionSummaryCSV,
+  };
+}
+
+function buildSubjectTeacherPromptCardsHtml(test, subjectId, questions, sortedResults, studentById) {
+  const { detailCSV, studentSummaryCSV, questionSummaryCSV } = buildSubjectTeacherPromptData(test, subjectId, questions, sortedResults, studentById);
+  const prompts = [
+    {
+      id: "subjectDetail",
+      title: "Analyze Class Detail CSV",
+      prompt: [
+        "I have a CSV of subject-wise class test results with columns: Test, Subject, Student, Roll, Question_No, Chapter, Topic, Subtopic, Question, Status, Correct_Answer.",
+        "",
+        "Analyze this data and:",
+        "1. Identify the top 5 weakest questions and topics for the class",
+        "2. List students who need immediate support and the exact questions they struggled with",
+        "3. Find common error patterns by chapter, topic, and subtopic",
+        "4. Suggest a focused reteaching plan for the subject teacher",
+        "",
+        "CSV content:",
+        detailCSV,
+      ].join("\n"),
+    },
+    {
+      id: "studentSummary",
+      title: "Analyze Student Summary CSV",
+      prompt: [
+        "I have a CSV summary of all students in one subject test with columns: Test, Subject, Student, Roll, Total_Correct, Total_Wrong, Total_Skipped, Questions, Accuracy_Percent.",
+        "",
+        "Analyze this data and:",
+        "1. Rank students by performance bands",
+        "2. Identify students with high wrong answers or high skipped answers",
+        "3. Recommend groups for remediation, practice, and enrichment",
+        "4. Write a concise teacher action plan for the next class",
+        "",
+        "CSV content:",
+        studentSummaryCSV,
+      ].join("\n"),
+    },
+    {
+      id: "questionSummary",
+      title: "Analyze Question/Topic Summary CSV",
+      prompt: [
+        "I have a CSV summary by question and topic with columns: Test, Subject, Question_No, Chapter, Topic, Subtopic, Correct, Wrong, Skipped, Questions, Accuracy_Percent, Question.",
+        "",
+        "Analyze this data and:",
+        "1. Rank questions/topics from weakest to strongest",
+        "2. Highlight topics with more than 50% wrong or skipped responses",
+        "3. Recommend which concepts to reteach first",
+        "4. Create a short practice plan using the weakest questions as anchors",
+        "",
+        "CSV content:",
+        questionSummaryCSV,
+      ].join("\n"),
+    },
+  ];
+
+  return `
+    <div class="ai-report-prompts card shadow-sm mb-4 no-print">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+          <div>
+            <h6 class="fw-bold mb-1">AI Analysis Prompts</h6>
+            <p class="text-muted small mb-0">Copy a class-level subject prompt with matching student result data included.</p>
+          </div>
+        </div>
+        <div class="ai-report-prompt-list">
+          ${prompts.map((item) => {
+            const targetId = `subjectTeacherPrompt${item.id}`;
+            const preview = item.prompt.split("\n").slice(0, 5).join("\n");
+            return `
+              <details class="ai-report-prompt">
+                <summary>
+                  <div class="ai-report-prompt-summary">
+                    <div>
+                      <div class="fw-semibold">${escapeHtml(item.title)}</div>
+                      <pre class="ai-report-prompt-preview">${escapeHtml(preview)}</pre>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ai-copy-prompt-btn" data-copy-target="${targetId}">
+                      <i class="bi bi-clipboard"></i> Copy Prompt
+                    </button>
+                  </div>
+                </summary>
+                <div class="ai-report-prompt-body">
+                  <label class="form-label small text-muted" for="${targetId}">${escapeHtml(item.title)} with data</label>
+                  <textarea id="${targetId}" class="form-control ai-report-prompt-text" rows="12" readonly>${escapeHtml(item.prompt)}</textarea>
+                </div>
+              </details>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function initPromptCopyButtons(root = document) {
+  root.querySelectorAll(".ai-copy-prompt-btn").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const target = document.getElementById(button.dataset.copyTarget || "");
+      if (!target) return;
+
+      const originalHtml = button.innerHTML;
+      try {
+        await navigator.clipboard.writeText(target.value || target.textContent || "");
+        button.innerHTML = '<i class="bi bi-check2"></i> Copied';
+      } catch (error) {
+        target.focus();
+        target.select?.();
+        button.innerHTML = '<i class="bi bi-exclamation-circle"></i> Select text';
+      }
+
+      window.setTimeout(() => {
+        button.innerHTML = originalHtml;
+      }, 1800);
+    });
+  });
+}
+
 function renderSubjectResults(test, results, students, questionPaper, subjectId) {
   const questions = getSubjectQuestions(test, questionPaper, subjectId);
   const studentById = new Map(students.map((student) => [student.studentId || student.id, student]));
@@ -592,6 +842,7 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
     .join("");
 
   setContentHtml(`
+    ${buildSubjectTeacherPromptCardsHtml(test, subjectId, questions, sortedResults, studentById)}
     <div class="subject-results-wrap">
       <div class="subject-results-scroll">
         <table class="subject-results-table">
@@ -610,6 +861,8 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
       </div>
     </div>
   `);
+
+  initPromptCopyButtons(contentEl);
 
   contentEl.querySelectorAll(".subject-question-header").forEach((button) => {
     const showDetails = () => {

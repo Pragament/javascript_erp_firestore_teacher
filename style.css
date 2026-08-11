@@ -28,6 +28,7 @@
 .ai-report-prompt-preview{margin:.35rem 0 0;color:#64748b;font-size:.78rem;line-height:1.35;white-space:pre-wrap;font-family:inherit}
 .ai-report-prompt-body{border-top:1px solid #e9ecef;padding:.85rem 1rem 1rem}
 .ai-report-prompt-text{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:.8rem;line-height:1.45}
+@media (max-width:575.98px){.ai-report-prompt-summary{flex-direction:column}.ai-copy-prompt-btn{align-self:flex-start}}
 .report-multiselect{min-height:140px}
 .report-multiselect option{padding:.4rem .6rem}
 .report-stat-card{border-top:4px solid #16a085}
