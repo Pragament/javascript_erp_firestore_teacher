@@ -2760,6 +2760,8 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
     total,
     scorePercent,
   });
+  const currentSectionId = new URLSearchParams(window.location.search).get("sectionId") || test.sectionId || "";
+  const allTestsProgressUrl = `report.html?studentId=${encodeURIComponent(studentId)}${currentSectionId ? `&sectionId=${encodeURIComponent(currentSectionId)}` : ""}`;
 
   setReportHtml(`
     <div class="card shadow-sm mb-4">
@@ -2781,7 +2783,11 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
                 ${correct}/${total} correct (${scorePercent}%)
               </span>
             </p>
-            <p class="small text-muted mb-0">Score cards below separately show recalculated score and score percentage.</p>
+            <p class="small text-muted mb-2">Score cards below separately show recalculated score and score percentage.</p>
+            <a class="btn btn-sm" style="background:#16a085;color:white;border:none"
+               href="${allTestsProgressUrl}">
+              <i class="bi bi-graph-up"></i> Progress (all tests)
+            </a>
             <p class="hidden mt-2 mb-0">
               <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
                  href="report.html?testId=${encodeURIComponent(testId)}&studentId=${encodeURIComponent(studentId)}" target="_blank">
