@@ -50,6 +50,8 @@
 .question-detail-meta{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}
 .question-detail-close{border:0;background:#f1f3f5;border-radius:6px;width:32px;height:32px;line-height:1}
 .question-detail-text{white-space:pre-wrap;line-height:1.55}
+.question-detail-text p,.question-detail-options p,.question-detail-inline p{margin-bottom:.35rem}
+.question-detail-text p:last-child,.question-detail-options p:last-child,.question-detail-inline p:last-child{margin-bottom:0}
 
 /* Calendar Styles */
 .calendar-view{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;min-height:400px}

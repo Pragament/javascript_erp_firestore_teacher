@@ -61,6 +61,47 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function sanitizeRichHtml(value) {
+  const raw = normalizeText(value);
+  if (!raw) return "";
+
+  const template = document.createElement("template");
+  template.innerHTML = raw;
+  const allowedTags = new Set(["B", "BR", "EM", "I", "LI", "OL", "P", "SPAN", "STRONG", "SUB", "SUP", "U", "UL"]);
+  const droppedTags = new Set(["IFRAME", "OBJECT", "SCRIPT", "STYLE", "TEMPLATE"]);
+
+  const cleanNode = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || "");
+    if (node.nodeType !== Node.ELEMENT_NODE) return document.createTextNode("");
+    if (droppedTags.has(node.tagName)) return document.createTextNode("");
+
+    const children = Array.from(node.childNodes).map(cleanNode);
+
+    if (!allowedTags.has(node.tagName)) {
+      const fragment = document.createDocumentFragment();
+      children.forEach((child) => fragment.appendChild(child));
+      return fragment;
+    }
+
+    const clone = document.createElement(node.tagName.toLowerCase());
+    children.forEach((child) => clone.appendChild(child));
+    return clone;
+  };
+
+  const fragment = document.createDocumentFragment();
+  Array.from(template.content.childNodes).forEach((node) => fragment.appendChild(cleanNode(node)));
+
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(fragment);
+  return wrapper.innerHTML;
+}
+
+function renderRichText(value, fallback = "") {
+  const sanitizedHtml = sanitizeRichHtml(value);
+  if (sanitizedHtml) return sanitizedHtml;
+  return escapeHtml(fallback);
+}
+
 function showError(message) {
   subtitleEl.textContent = message;
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
@@ -419,12 +460,13 @@ function renderQuestionDetailModal(question) {
   const existing = document.querySelector(".question-detail-overlay");
   if (existing) existing.remove();
 
-  const correctAnswer = question.correctOption
-    ? `Option ${question.correctOption}${question.options[question.correctOption - 1] ? `: ${question.options[question.correctOption - 1]}` : ""}`
+  const correctOptionText = question.correctOption ? question.options[question.correctOption - 1] : "";
+  const correctAnswerHtml = question.correctOption
+    ? `Option ${escapeHtml(question.correctOption)}${correctOptionText ? `: <span class="question-detail-inline">${renderRichText(correctOptionText)}</span>` : ""}`
     : "Not available";
 
   const optionsHtml = question.options.length
-    ? `<ol class="mb-0">${question.options.map((option) => `<li>${escapeHtml(option)}</li>`).join("")}</ol>`
+    ? `<ol class="mb-0 question-detail-options">${question.options.map((option) => `<li>${renderRichText(option)}</li>`).join("")}</ol>`
     : '<div class="text-muted">No options available.</div>';
 
   const overlay = document.createElement("div");
@@ -446,7 +488,7 @@ function renderQuestionDetailModal(question) {
         </div>
         <div class="mb-3">
           <div class="fw-semibold mb-1">Question</div>
-          <div class="question-detail-text">${escapeHtml(question.questionText || "Question text not available.")}</div>
+          <div class="question-detail-text">${renderRichText(question.questionText, "Question text not available.")}</div>
         </div>
         <div class="mb-3">
           <div class="fw-semibold mb-1">Options</div>
@@ -454,12 +496,12 @@ function renderQuestionDetailModal(question) {
         </div>
         <div class="mb-3">
           <div class="fw-semibold mb-1">Correct Answer</div>
-          <div>${escapeHtml(correctAnswer)}</div>
+          <div>${correctAnswerHtml}</div>
         </div>
         ${question.explanation ? `
           <div>
             <div class="fw-semibold mb-1">Explanation</div>
-            <div class="question-detail-text">${escapeHtml(question.explanation)}</div>
+            <div class="question-detail-text">${renderRichText(question.explanation)}</div>
           </div>
         ` : ""}
       </div>
