@@ -166,6 +166,15 @@ function renderAnswerLabel(value, fallback = "—") {
   return renderRichText(text);
 }
 
+function plainTextFromRichHtml(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const template = document.createElement("template");
+  template.innerHTML = sanitizeRichHtml(raw);
+  return (template.content.textContent || raw).replace(/\s+/g, " ").trim();
+}
+
 function escapeCSV(value) {
   const str = String(value ?? "");
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
@@ -770,6 +779,154 @@ function buildCurrentTestSummaryData(records = currentTestQuestionsData) {
       if (a.accuracy !== b.accuracy) return a.accuracy - b.accuracy;
       return `${a.subject} ${a.topic}`.localeCompare(`${b.subject} ${b.topic}`);
     });
+}
+
+function rowsToCSV(rows) {
+  return rows.map((row) => row.map(escapeCSV).join(",")).join("\n");
+}
+
+function getSingleTestDateLabel(test) {
+  const dateObj = parseDate(test?.testDate || test?.date || test?.createdAt);
+  return formatDate(dateObj, test?.testDate || test?.date || "Current test");
+}
+
+function buildSingleTestPromptData(test, student) {
+  const testName = test?.testName || "Test";
+  const studentName = student?.name || "Student";
+  const summaryRows = buildCurrentTestSummaryData();
+
+  const detailCSV = rowsToCSV([
+    ["Test", "Student", "Question_No", "Question", "Your_Answer", "Correct_Answer", "Time_Taken", "Status"],
+    ...currentTestQuestionsData.map((q) => [
+      testName,
+      studentName,
+      q.questionNumber,
+      plainTextFromRichHtml(q.questionText),
+      plainTextFromRichHtml(q.userAnswerLabel),
+      plainTextFromRichHtml(q.correctAnswerLabel),
+      "",
+      q.statusLabel || q.status,
+    ]),
+  ]);
+
+  const summaryCSV = rowsToCSV([
+    ["Subject", "Topic", "Num_Correct", "Num_Wrong", "Num_Skipped", "Questions"],
+    ...summaryRows.map((row) => [
+      row.subject,
+      row.topic,
+      row.correct,
+      row.wrong,
+      row.skipped,
+      row.total,
+    ]),
+  ]);
+
+  const progressCSV = rowsToCSV([
+    ["Date", "Subject", "Topic", "Num_Correct", "Num_Wrong"],
+    ...summaryRows.map((row) => [
+      getSingleTestDateLabel(test),
+      row.subject,
+      row.topic,
+      row.correct,
+      row.wrong,
+    ]),
+  ]);
+
+  return { detailCSV, summaryCSV, progressCSV };
+}
+
+function buildAIPromptCardsHtml(test, student) {
+  const { detailCSV, summaryCSV, progressCSV } = buildSingleTestPromptData(test, student);
+  const prompts = [
+    {
+      id: "detail",
+      title: "Analyze Detail CSV",
+      prompt: [
+        "I have a CSV of student test results with columns: Test, Student, Question_No, Question, Your_Answer, Correct_Answer, Time_Taken, Status.",
+        "",
+        "Analyze this data and:",
+        "1. Identify the top 3 weakest topics based on incorrect answers",
+        "2. List specific question numbers where the student struggled most",
+        "3. Calculate average time spent per question",
+        "4. Suggest 5 targeted study areas",
+        "",
+        "CSV content:",
+        detailCSV,
+      ].join("\n"),
+    },
+    {
+      id: "summary",
+      title: "Analyze Summary CSV",
+      prompt: [
+        "I have a CSV summary with columns: Subject, Topic, Num_Correct, Num_Wrong, Num_Skipped, Questions.",
+        "",
+        "Analyze this data and:",
+        "1. Rank topics by accuracy percentage (correct/total)",
+        "2. Highlight topics with >50% error rate",
+        "3. Recommend priority topics for revision",
+        "4. Calculate overall subject-wise performance",
+        "",
+        "CSV content:",
+        summaryCSV,
+      ].join("\n"),
+    },
+    {
+      id: "progress",
+      title: "Analyze Progress CSV",
+      prompt: [
+        "I have a CSV progress report with columns: Date, Subject, Topic, Num_Correct, Num_Wrong.",
+        "",
+        "Analyze this data and:",
+        "1. Show learning trends over time per subject",
+        "2. Identify topics showing improvement vs decline",
+        "3. Calculate weekly/monthly accuracy rates",
+        "4. Predict which topics need immediate attention",
+        "",
+        "Note: the CSV below contains current-test rows. Add previous exported progress rows below it for a stronger trend analysis.",
+        "",
+        "CSV content:",
+        progressCSV,
+      ].join("\n"),
+    },
+  ];
+
+  return `
+    <div class="ai-report-prompts card shadow-sm mb-4 no-print">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+          <div>
+            <h6 class="fw-bold mb-1">AI Analysis Prompts</h6>
+            <p class="text-muted small mb-0">Copy a prompt with the matching report data already included.</p>
+          </div>
+        </div>
+        <div class="ai-report-prompt-list">
+          ${prompts.map((item) => {
+            const targetId = `aiPrompt${item.id}`;
+            const preview = item.prompt.split("\n").slice(0, 5).join("\n");
+            return `
+              <details class="ai-report-prompt">
+                <summary>
+                  <div class="ai-report-prompt-summary">
+                    <div>
+                      <div class="fw-semibold">${escapeHtml(item.title)}</div>
+                      <pre class="ai-report-prompt-preview">${escapeHtml(preview)}</pre>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ai-copy-prompt-btn" data-copy-target="${targetId}">
+                      <i class="bi bi-clipboard"></i> Copy Prompt
+                    </button>
+                  </div>
+                </summary>
+                <div class="ai-report-prompt-body">
+                  <label class="form-label small text-muted" for="${targetId}">${escapeHtml(item.title)} with data</label>
+                  <textarea id="${targetId}" class="form-control ai-report-prompt-text" rows="12" readonly>${escapeHtml(item.prompt)}</textarea>
+                </div>
+              </details>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function buildSingleTestAIContext({ test, student, correct, total, scorePercent }) {
@@ -2738,6 +2895,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
         </button>
       </div>
     </div>
+    ${buildAIPromptCardsHtml(test, student)}
     <div class="card shadow-sm mb-4 no-print">
       <div class="card-body">
         <div class="row g-3 align-items-start">
@@ -2772,6 +2930,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
 
   initSingleTestInsights();
   initSingleTestCSVExport(test.testName, student.name);
+  initReportPromptCopyButtons();
   initSingleTestAIChat();
   renderMathInReport();
 }
@@ -2817,6 +2976,32 @@ function initSingleTestCSVExport(testName, studentName) {
       ...buildCurrentTestSummaryData().map((s) => [s.subject, s.chapter, s.topic, s.correct, s.wrong, s.skipped, s.total]),
     ];
     downloadCSV(`${safeTestName}_Summary.csv`, rows);
+  });
+}
+
+function initReportPromptCopyButtons() {
+  document.querySelectorAll(".ai-copy-prompt-btn").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const target = document.getElementById(button.dataset.copyTarget || "");
+      if (!target) return;
+
+      const originalHtml = button.innerHTML;
+      try {
+        await navigator.clipboard.writeText(target.value || target.textContent || "");
+        button.innerHTML = '<i class="bi bi-check2"></i> Copied';
+      } catch (error) {
+        target.focus();
+        target.select?.();
+        button.innerHTML = '<i class="bi bi-exclamation-circle"></i> Select text';
+      }
+
+      window.setTimeout(() => {
+        button.innerHTML = originalHtml;
+      }, 1800);
+    });
   });
 }
 
