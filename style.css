@@ -16,6 +16,10 @@
 .feedback-section .btn-outline-secondary[aria-expanded="true"] .bi-chevron-down{transform:rotate(180deg)}
 .feedback-section .bi-chevron-down{transition:transform .3s ease}
 .feedback-content{white-space:pre-wrap;line-height:1.6}
+.report-rich-text{white-space:pre-wrap;line-height:1.55}
+.report-rich-text p,.report-rich-inline p{margin-bottom:.35rem}
+.report-rich-text p:last-child,.report-rich-inline p:last-child{margin-bottom:0}
+.report-rich-inline p{display:inline}
 .report-multiselect{min-height:140px}
 .report-multiselect option{padding:.4rem .6rem}
 .report-stat-card{border-top:4px solid #16a085}

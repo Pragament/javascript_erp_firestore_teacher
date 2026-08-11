@@ -113,6 +113,59 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function sanitizeRichHtml(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const template = document.createElement("template");
+  template.innerHTML = raw;
+  const allowedTags = new Set(["B", "BR", "EM", "I", "LI", "OL", "P", "SPAN", "STRONG", "SUB", "SUP", "U", "UL"]);
+  const droppedTags = new Set(["IFRAME", "OBJECT", "SCRIPT", "STYLE", "TEMPLATE"]);
+
+  const cleanNode = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || "");
+    if (node.nodeType !== Node.ELEMENT_NODE) return document.createTextNode("");
+    if (droppedTags.has(node.tagName)) return document.createTextNode("");
+
+    const children = Array.from(node.childNodes).map(cleanNode);
+
+    if (!allowedTags.has(node.tagName)) {
+      const fragment = document.createDocumentFragment();
+      children.forEach((child) => fragment.appendChild(child));
+      return fragment;
+    }
+
+    const clone = document.createElement(node.tagName.toLowerCase());
+    children.forEach((child) => clone.appendChild(child));
+    return clone;
+  };
+
+  const fragment = document.createDocumentFragment();
+  Array.from(template.content.childNodes).forEach((node) => fragment.appendChild(cleanNode(node)));
+
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(fragment);
+  return wrapper.innerHTML;
+}
+
+function renderRichText(value, fallback = "") {
+  const sanitizedHtml = sanitizeRichHtml(value);
+  if (sanitizedHtml) return sanitizedHtml;
+  return escapeHtml(fallback);
+}
+
+function renderAnswerLabel(value, fallback = "—") {
+  const text = String(value ?? "").trim();
+  if (!text) return escapeHtml(fallback);
+
+  const optionMatch = text.match(/^([A-D]\.)\s*([\s\S]*)$/);
+  if (optionMatch) {
+    return `${escapeHtml(optionMatch[1])} <span class="report-rich-inline">${renderRichText(optionMatch[2])}</span>`;
+  }
+
+  return renderRichText(text);
+}
+
 function escapeCSV(value) {
   const str = String(value ?? "");
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
@@ -1890,12 +1943,12 @@ function renderQuestionTable(records) {
       <td class="question-field question-field-chapter">${escapeHtml(record.chapter || "—")}</td>
       <td class="question-field question-field-topic">${escapeHtml(record.topic || "—")}</td>
       <td class="question-field question-field-subtopic">${escapeHtml(record.subtopic || "—")}</td>
-      <td class="question-field question-field-question">${escapeHtml(record.questionText || "—")}</td>
+      <td class="question-field question-field-question report-rich-text">${renderRichText(record.questionText, "—")}</td>
       <td>${escapeHtml(record.statusLabel || "—")}</td>
-      <td class="question-field question-field-answer">${escapeHtml(record.userAnswerLabel || "—")}</td>
-      <td class="question-field question-field-answer">${escapeHtml(record.correctAnswerLabel || "—")}</td>
-      <td class="question-field question-field-options">${escapeHtml((record.options || []).join(" | ") || "—")}</td>
-      <td class="question-field question-field-explanation">${escapeHtml(record.explanation || "—")}</td>
+      <td class="question-field question-field-answer">${renderAnswerLabel(record.userAnswerLabel)}</td>
+      <td class="question-field question-field-answer">${renderAnswerLabel(record.correctAnswerLabel)}</td>
+      <td class="question-field question-field-options report-rich-text">${(record.options || []).length ? record.options.map(renderAnswerLabel).join(" ") : "—"}</td>
+      <td class="question-field question-field-explanation report-rich-text">${renderRichText(record.explanation, "—")}</td>
     </tr>
   `).join("");
 
@@ -2484,11 +2537,11 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
           </div>
         ` : ""}
         ${question.Question?.trim()
-        ? `<p class="mb-3 question-field question-field-question">${escapeHtml(question.Question)}</p>`
+        ? `<div class="mb-3 question-field question-field-question report-rich-text">${renderRichText(question.Question)}</div>`
         : ""}
         <div class="question-field question-field-answer small text-muted mb-3">
-          <div><strong>Your Answer:</strong> ${escapeHtml(userAnswerLabel || "—")}</div>
-          <div><strong>Correct Answer:</strong> ${escapeHtml(correctAnswerLabel || "—")}</div>
+          <div><strong>Your Answer:</strong> ${renderAnswerLabel(userAnswerLabel)}</div>
+          <div><strong>Correct Answer:</strong> ${renderAnswerLabel(correctAnswerLabel)}</div>
         </div>
     `;
 
@@ -2514,7 +2567,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
       questionsHtml += `
         <div class="option-box ${className} question-field question-field-options">
           <strong>${optionLetter}.</strong>
-          ${escapeHtml(opt)}
+          <span class="report-rich-inline">${renderRichText(opt)}</span>
           ${indicator}
         </div>
       `;
@@ -2530,7 +2583,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
           <div class="collapse mt-2" id="${feedbackId}">
             <div class="card card-body bg-light border-start border-4 border-success">
               <h6 class="fw-bold text-success mb-2">Explanation</h6>
-              <div class="feedback-content">${escapeHtml(feedbackCorrectAnswer)}</div>
+              <div class="feedback-content report-rich-text">${renderRichText(feedbackCorrectAnswer)}</div>
             </div>
           </div>
         </div>
