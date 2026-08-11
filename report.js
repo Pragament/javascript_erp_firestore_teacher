@@ -2998,8 +2998,16 @@ function initReportPromptCopyButtons() {
       const originalHtml = button.innerHTML;
       try {
         await navigator.clipboard.writeText(target.value || target.textContent || "");
+        window.trackAppEvent?.('ai_prompt_copy_success', {
+          prompt_target: button.dataset.copyTarget || '',
+          button_label: (button.innerText || button.textContent || '').replace(/\s+/g, ' ').trim(),
+        });
         button.innerHTML = '<i class="bi bi-check2"></i> Copied';
       } catch (error) {
+        window.trackAppEvent?.('ai_prompt_copy_failed', {
+          prompt_target: button.dataset.copyTarget || '',
+          error_name: error?.name || 'ClipboardError',
+        });
         target.focus();
         target.select?.();
         button.innerHTML = '<i class="bi bi-exclamation-circle"></i> Select text';
