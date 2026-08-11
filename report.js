@@ -833,11 +833,86 @@ function buildSingleTestPromptData(test, student) {
     ]),
   ]);
 
-  return { detailCSV, summaryCSV, progressCSV };
+  const learningRows = currentTestQuestionsData.map((q) => [
+    testName,
+    studentName,
+    q.questionNumber,
+    q.subject,
+    q.chapter,
+    q.topic,
+    q.subtopic,
+    plainTextFromRichHtml(q.questionText),
+    plainTextFromRichHtml(q.userAnswerLabel),
+    plainTextFromRichHtml(q.correctAnswerLabel),
+    q.statusLabel || q.status,
+    (q.options || []).map(plainTextFromRichHtml).join(" | "),
+    plainTextFromRichHtml(q.explanation),
+  ]);
+
+  const learningCSV = rowsToCSV([
+    ["Test", "Student", "Question_No", "Subject", "Chapter", "Topic", "Subtopic", "Question", "Your_Answer", "Correct_Answer", "Status", "Options", "Explanation"],
+    ...learningRows,
+  ]);
+
+  const correctUnderstandingCSV = rowsToCSV([
+    ["Test", "Student", "Question_No", "Subject", "Chapter", "Topic", "Subtopic", "Question", "Correct_Answer", "Options", "Explanation"],
+    ...currentTestQuestionsData
+      .filter((q) => q.status === "correct")
+      .map((q) => [
+        testName,
+        studentName,
+        q.questionNumber,
+        q.subject,
+        q.chapter,
+        q.topic,
+        q.subtopic,
+        plainTextFromRichHtml(q.questionText),
+        plainTextFromRichHtml(q.correctAnswerLabel),
+        (q.options || []).map(plainTextFromRichHtml).join(" | "),
+        plainTextFromRichHtml(q.explanation),
+      ]),
+  ]);
+
+  const wrongUnderstandingCSV = rowsToCSV([
+    ["Test", "Student", "Question_No", "Subject", "Chapter", "Topic", "Subtopic", "Question", "Your_Answer", "Correct_Answer", "Status", "Options", "Explanation"],
+    ...currentTestQuestionsData
+      .filter((q) => q.status !== "correct")
+      .map((q) => [
+        testName,
+        studentName,
+        q.questionNumber,
+        q.subject,
+        q.chapter,
+        q.topic,
+        q.subtopic,
+        plainTextFromRichHtml(q.questionText),
+        plainTextFromRichHtml(q.userAnswerLabel),
+        plainTextFromRichHtml(q.correctAnswerLabel),
+        q.statusLabel || q.status,
+        (q.options || []).map(plainTextFromRichHtml).join(" | "),
+        plainTextFromRichHtml(q.explanation),
+      ]),
+  ]);
+
+  return {
+    detailCSV,
+    summaryCSV,
+    progressCSV,
+    learningCSV,
+    correctUnderstandingCSV,
+    wrongUnderstandingCSV,
+  };
 }
 
 function buildAIPromptCardsHtml(test, student) {
-  const { detailCSV, summaryCSV, progressCSV } = buildSingleTestPromptData(test, student);
+  const {
+    detailCSV,
+    summaryCSV,
+    progressCSV,
+    learningCSV,
+    correctUnderstandingCSV,
+    wrongUnderstandingCSV,
+  } = buildSingleTestPromptData(test, student);
   const prompts = [
     {
       id: "detail",
@@ -887,6 +962,159 @@ function buildAIPromptCardsHtml(test, student) {
         "",
         "CSV content:",
         progressCSV,
+      ].join("\n"),
+    },
+    {
+      id: "conceptualLearning",
+      title: "Conceptual Learning Review",
+      prompt: [
+        "I have a CSV of one student's test questions with columns: Test, Student, Question_No, Subject, Chapter, Topic, Subtopic, Question, Your_Answer, Correct_Answer, Status, Options, Explanation.",
+        "",
+        "Help the student learn conceptually, not by rote memorization:",
+        "1. Explain the key concept behind each wrong and correct question",
+        "2. For correct questions, check whether the student may still need deeper understanding",
+        "3. For wrong/skipped questions, explain why the correct answer works",
+        "4. Give simple why/how explanations and avoid answer memorization",
+        "5. End with concept checkpoints the student can self-test",
+        "",
+        "CSV content:",
+        learningCSV,
+      ].join("\n"),
+    },
+    {
+      id: "correctQuestionsDeepen",
+      title: "Deepen Correct Answers",
+      prompt: [
+        "I have CSV data for questions the student answered correctly. Columns: Test, Student, Question_No, Subject, Chapter, Topic, Subtopic, Question, Correct_Answer, Options, Explanation.",
+        "",
+        "Analyze correct answers to strengthen understanding:",
+        "1. Explain why each correct answer is correct in simple language",
+        "2. Identify any questions that could have been guessed or solved by shortcut only",
+        "3. Ask one follow-up why/how question for each concept",
+        "4. Suggest one variation of each question to verify real understanding",
+        "5. Connect each concept to a prerequisite or next-level idea",
+        "",
+        "CSV content:",
+        correctUnderstandingCSV,
+      ].join("\n"),
+    },
+    {
+      id: "wrongMistakeDiagnosis",
+      title: "Wrong Answer Diagnosis",
+      prompt: [
+        "I have CSV data for questions the student got wrong or skipped. Columns: Test, Student, Question_No, Subject, Chapter, Topic, Subtopic, Question, Your_Answer, Correct_Answer, Status, Options, Explanation.",
+        "",
+        "Diagnose mistakes without encouraging memorization:",
+        "1. Identify the likely misconception behind each wrong/skipped question",
+        "2. Explain the missing prerequisite concept",
+        "3. Show a step-by-step reasoning path to the correct answer",
+        "4. Give a mini-practice task for the same concept in a new form",
+        "5. Group mistakes into concept gaps, calculation/process gaps, and attention gaps",
+        "",
+        "CSV content:",
+        wrongUnderstandingCSV,
+      ].join("\n"),
+    },
+    {
+      id: "activeLearning",
+      title: "Active Learning Tasks",
+      prompt: [
+        "I have a CSV of one student's test performance. Use it to create active learning tasks instead of passive notes.",
+        "",
+        "Create activities that make the student solve, discuss, and apply:",
+        "1. Convert weak concepts into guided problem-solving tasks",
+        "2. Add prompts where the student must explain why each step is valid",
+        "3. Create short discussion questions for parent/teacher/student review",
+        "4. Include retrieval practice for both correct and wrong questions",
+        "5. Avoid asking the student to memorize answers from this test",
+        "",
+        "CSV content:",
+        learningCSV,
+      ].join("\n"),
+    },
+    {
+      id: "meaningfulConnections",
+      title: "Meaningful Connections",
+      prompt: [
+        "I have a CSV of the student's current test questions and performance.",
+        "",
+        "Help the student connect new knowledge to what they already know:",
+        "1. Identify familiar prior concepts needed for each weak topic",
+        "2. Explain each topic using simple analogies and known ideas",
+        "3. Build a bridge from prerequisite concepts to current concepts",
+        "4. Give one connection question per topic: 'How is this similar to something you already know?'",
+        "5. Include correct-answer topics too, so strengths become anchors for weaker topics",
+        "",
+        "CSV content:",
+        learningCSV,
+      ].join("\n"),
+    },
+    {
+      id: "contextualLearning",
+      title: "Real-Life Context Learning",
+      prompt: [
+        "I have a CSV of one student's test questions, answers, and explanations.",
+        "",
+        "Create contextual and experiential learning support:",
+        "1. Explain each weak topic through a real-life situation or hands-on example",
+        "2. For abstract questions, give a concrete story, object, diagram idea, or activity",
+        "3. Show how the concept is used in practice",
+        "4. Include one applied question that changes the numbers/context but keeps the concept",
+        "5. Keep the focus on understanding why/how, not memorizing this test",
+        "",
+        "CSV content:",
+        learningCSV,
+      ].join("\n"),
+    },
+    {
+      id: "appliedPractice",
+      title: "Applied Practice Plan",
+      prompt: [
+        "I have CSV data from a student test with correct, wrong, and skipped questions.",
+        "",
+        "Create an applied learning practice plan:",
+        "1. Make 2 new application problems for each weak topic",
+        "2. Make 1 challenge variation for each topic answered correctly",
+        "3. Include hints that guide reasoning without giving answers immediately",
+        "4. Add a self-check rubric: concept understood, method chosen, steps checked, answer interpreted",
+        "5. Sequence practice from prerequisite to current topic to application",
+        "",
+        "CSV content:",
+        learningCSV,
+      ].join("\n"),
+    },
+    {
+      id: "teachBack",
+      title: "Teach-Back Questions",
+      prompt: [
+        "I have a CSV of a student's test questions and performance.",
+        "",
+        "Create a teach-back study script:",
+        "1. For each important concept, write a question the student must explain aloud",
+        "2. Include expected explanation points, not just final answers",
+        "3. Add 'why is the wrong option tempting?' prompts where useful",
+        "4. Add one parent/teacher follow-up question per weak topic",
+        "5. Include correct questions so the student proves understanding beyond the answer",
+        "",
+        "CSV content:",
+        learningCSV,
+      ].join("\n"),
+    },
+    {
+      id: "antiRoteRevision",
+      title: "Anti-Rote Revision Checklist",
+      prompt: [
+        "I have one student's test data in CSV form.",
+        "",
+        "Build an anti-rote revision checklist:",
+        "1. List concepts the student should understand, not memorize",
+        "2. For each concept, write 'I can explain...', 'I can apply...', and 'I can avoid...' checklist items",
+        "3. Include common traps from wrong answers and skipped questions",
+        "4. Include extension checks for correct answers",
+        "5. Make the checklist short enough to use before the next test",
+        "",
+        "CSV content:",
+        learningCSV,
       ].join("\n"),
     },
   ];
