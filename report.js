@@ -2990,6 +2990,10 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   });
   const currentSectionId = new URLSearchParams(window.location.search).get("sectionId") || test.sectionId || "";
   const allTestsProgressUrl = `report.html?studentId=${encodeURIComponent(studentId)}${currentSectionId ? `&sectionId=${encodeURIComponent(currentSectionId)}` : ""}`;
+  const questionPaperId = test.questionPaperID || test.questionPaperId || questionPaper?.questionPaperID || questionPaper?.id || "";
+  const onlineTestUrl = questionPaperId
+    ? `https://practice.technikh.com/quiz.html?questionPaperId=${encodeURIComponent(questionPaperId)}&randomQuestions=true&questionFormat=mixed&openBook=false`
+    : "";
 
   setReportHtml(`
     <div class="card shadow-sm mb-4">
@@ -3012,10 +3016,18 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
               </span>
             </p>
             <p class="small text-muted mb-2">Score cards below separately show recalculated score and score percentage.</p>
-            <a class="btn btn-sm" style="background:#16a085;color:white;border:none"
-               href="${allTestsProgressUrl}">
-              <i class="bi bi-graph-up"></i> Progress (all tests)
-            </a>
+            <div class="d-flex flex-wrap gap-2">
+              <a class="btn btn-sm" style="background:#16a085;color:white;border:none"
+                 href="${allTestsProgressUrl}">
+                <i class="bi bi-graph-up"></i> Progress (all tests)
+              </a>
+              ${onlineTestUrl ? `
+                <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
+                   href="${onlineTestUrl}" target="_blank" rel="noopener">
+                  <i class="bi bi-pencil-square"></i> Open Online Test
+                </a>
+              ` : ""}
+            </div>
             <p class="hidden mt-2 mb-0">
               <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
                  href="report.html?testId=${encodeURIComponent(testId)}&studentId=${encodeURIComponent(studentId)}" target="_blank">
