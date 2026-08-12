@@ -3018,7 +3018,7 @@ ${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` 
             <p class="small text-muted mb-2">Score cards below separately show recalculated score and score percentage.</p>
             <div class="d-flex flex-wrap gap-2">
               <a class="btn btn-sm" style="background:#16a085;color:white;border:none"
-                 href="${allTestsProgressUrl}">
+                 href="${allTestsProgressUrl}" target="_blank" rel="noopener">
                 <i class="bi bi-graph-up"></i> Progress (all tests)
               </a>
               ${onlineTestUrl ? `
