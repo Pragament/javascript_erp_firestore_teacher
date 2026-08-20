@@ -128,6 +128,24 @@ function showError(message) {
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
 }
 
+function getDashboardSignInUrl() {
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return `index.html?redirect=${encodeURIComponent(currentPath)}`;
+}
+
+function showSignInPrompt() {
+  const message = "Please sign in from the teacher dashboard first.";
+  subtitleEl.textContent = message;
+  setContentHtml(`
+    <div class="alert alert-warning d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+      <div>${escapeHtml(message)}</div>
+      <a class="btn btn-sm" style="background:#16a085;color:white;border:none;" href="${escapeHtml(getDashboardSignInUrl())}">
+        <i class="bi bi-google me-1"></i>Sign in with Google
+      </a>
+    </div>
+  `);
+}
+
 function normalizeAssignedSections(snapshot) {
   const sectionsMap = new Map();
 
@@ -426,7 +444,7 @@ async function loadTestResults(testId) {
   try {
     const user = auth.currentUser;
     if (!user) {
-      showError("Please sign in from the teacher dashboard first.");
+      showSignInPrompt();
       return;
     }
     
@@ -1018,7 +1036,7 @@ async function initializePage() {
 
   auth.onAuthStateChanged(async (user) => {
     if (!user) {
-      showError("Please sign in from the teacher dashboard first.");
+      showSignInPrompt();
       return;
     }
     // Setup sort change listener

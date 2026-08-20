@@ -115,6 +115,30 @@ let selectedPSEDIndicators = [];
 let currentTeacherIdentifier = null;
 let currentUseTeacherId = false;
 
+const REDIRECT_PARAM = 'redirect';
+
+function getSafeRedirectPath() {
+    const redirect = new URLSearchParams(window.location.search).get(REDIRECT_PARAM);
+    if (!redirect) return '';
+
+    try {
+        const redirectUrl = new URL(redirect, window.location.origin);
+        if (redirectUrl.origin !== window.location.origin) return '';
+        if (redirectUrl.pathname.endsWith('/index.html') || redirectUrl.pathname === '/' || redirectUrl.pathname === '') return '';
+        return `${redirectUrl.pathname}${redirectUrl.search}${redirectUrl.hash}`;
+    } catch (error) {
+        console.warn('Ignoring invalid post-login redirect:', error);
+        return '';
+    }
+}
+
+function redirectToPreviousPageAfterLogin() {
+    const redirectPath = getSafeRedirectPath();
+    if (redirectPath) {
+        window.location.assign(redirectPath);
+    }
+}
+
 // PSED indicators for event tagging
 const psedIndicators = [
     { id: 'self_awareness', name: 'Self-awareness', category: 'personal' },
@@ -147,6 +171,7 @@ auth.onAuthStateChanged(async (user) => {
         elements.mainApp.classList.remove('d-none');
         elements.userEmail.textContent = user.email;
         await initializeApp();
+        redirectToPreviousPageAfterLogin();
     } else {
         currentUser = null;
         elements.mainApp.classList.add('d-none');
