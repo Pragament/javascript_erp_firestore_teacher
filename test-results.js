@@ -551,6 +551,34 @@ function getStudentResultLinks(result, student, test) {
   };
 }
 
+function getSubjectShareIcon(subject) {
+  const normalized = normalizeComparable(subject);
+  if (normalized.includes("physics")) return "📘";
+  if (normalized.includes("chemistry")) return "🧪";
+  if (normalized.includes("math")) return "📐";
+  if (normalized.includes("biology")) return "🌱";
+  return "📚";
+}
+
+function buildStudentShareText({ studentName, testName, subjects, subjectMarks, subjectMaxMarks, totalMarks, totalMaxMarks, rank, reportUrl }) {
+  const subjectLines = subjects.map((subject) => {
+    const marks = formatMarksValue(subjectMarks[subject] || 0);
+    const maxMarks = formatMarksValue(subjectMaxMarks[subject] || 0);
+    return `${getSubjectShareIcon(subject)} ${subject}: ${marks}/${maxMarks}`;
+  });
+
+  return [
+    `${studentName} has secured the following marks in ${testName}:`,
+    "",
+    ...subjectLines,
+    `📊 Total: ${formatMarksValue(totalMarks)}/${formatMarksValue(totalMaxMarks)}`,
+    `🏆 Rank: ${rank}`,
+    "",
+    "🔗 View Detailed Test Report:",
+    reportUrl,
+  ].join("\n");
+}
+
 function setResultsViewToggleVisible(visible) {
   if (!resultsViewToggleEl) return;
   resultsViewToggleEl.classList.toggle("d-none", !visible);
@@ -1395,6 +1423,11 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
       map[subject] = subjectMetrics.earnedMarks;
       return map;
     }, {});
+    const subjectMaxMarks = subjects.reduce((map, subject) => {
+      const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules);
+      map[subject] = subjectMetrics.maxMarks;
+      return map;
+    }, {});
     const gpa = Number(getResultGpa(scoreDetails.marks));
 
     return {
@@ -1407,6 +1440,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
       percentile,
       links,
       subjectMarks,
+      subjectMaxMarks,
       grade: getResultGrade(scoreDetails.marks),
       gpa,
       displayIndex: index + 1,
@@ -1415,6 +1449,17 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
 
   const rowsHtml = sortStudentResultRows(tableRows)
     .map((row) => {
+      const shareText = buildStudentShareText({
+        studentName: row.studentName,
+        testName: currentTestData?.testName || test.testName || "Test",
+        subjects,
+        subjectMarks: row.subjectMarks,
+        subjectMaxMarks: row.subjectMaxMarks,
+        totalMarks: row.metrics.earnedMarks,
+        totalMaxMarks: row.metrics.maxMarks,
+        rank: row.rank,
+        reportUrl: row.links.shareUrl,
+      });
       const subjectCellsHtml = subjects
         .map((subject) => {
           const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(row.result, subject), scoringRules);
@@ -1449,11 +1494,14 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
             ${navigator.share ? `<button type="button"
                class="btn btn-sm btn-outline-secondary share-link-btn"
                data-url="${row.links.shareUrl}"
+               data-title="Test Report"
+               data-text="${escapeHtml(shareText)}"
                title="Share this test">
               <i class="bi bi-share"></i>
             </button>` : `<button type="button"
                class="btn btn-sm btn-outline-secondary copy-link-btn"
                data-url="${row.links.shareUrl}"
+               data-text="${escapeHtml(shareText)}"
                title="Copy this test link">
               <i class="bi bi-link"></i>
             </button>`}
@@ -1495,12 +1543,44 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
 
 function renderStudentCards(test, sortedResults, studentById) {
   setTableScoreControlsVisible(false);
+  const subjects = getSubjectColumns(test, currentQuestionPaperData, sortedResults);
+  const scoringRules = getCurrentScoringRules();
+  const rankRows = [...sortedResults]
+    .map((result) => ({
+      result,
+      metrics: calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules),
+    }))
+    .sort((a, b) => {
+      if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
+      return b.metrics.marks - a.metrics.marks;
+    });
+  const rankByResultId = new Map(rankRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
   const cardsHtml = sortedResults
     .map((result) => {
       const student = getResultStudent(result, studentById);
       const studentName = student?.name || result.name || "Unknown";
       const score = calculateScore(result);
       const links = getStudentResultLinks(result, student, test);
+      const metrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
+      const subjectMarks = subjects.reduce((map, subject) => {
+        map[subject] = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules).earnedMarks;
+        return map;
+      }, {});
+      const subjectMaxMarks = subjects.reduce((map, subject) => {
+        map[subject] = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules).maxMarks;
+        return map;
+      }, {});
+      const shareText = buildStudentShareText({
+        studentName,
+        testName: currentTestData?.testName || test.testName || "Test",
+        subjects,
+        subjectMarks,
+        subjectMaxMarks,
+        totalMarks: metrics.earnedMarks,
+        totalMaxMarks: metrics.maxMarks,
+        rank: rankByResultId.get(result.id || result.studentId) || 0,
+        reportUrl: links.shareUrl,
+      });
 
       return `
         <div class="student-card">
@@ -1525,11 +1605,14 @@ function renderStudentCards(test, sortedResults, studentById) {
             ${navigator.share ? `<button type="button"
                class="btn btn-sm share-link-btn"
                data-url="${links.shareUrl}"
+               data-title="Test Report"
+               data-text="${escapeHtml(shareText)}"
                style="background:#6c757d;color:white;border:none">
               <i class="bi bi-share"></i> Share this test
             </button>` : `<button type="button"
                class="btn btn-sm copy-link-btn"
                data-url="${links.shareUrl}"
+               data-text="${escapeHtml(shareText)}"
                style="background:#6c757d;color:white;border:none">
               <i class="bi bi-link"></i> Copy this test Link
             </button>`}
@@ -1547,8 +1630,9 @@ function bindStudentResultLinkButtons() {
   contentEl.querySelectorAll(".copy-link-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const url = btn.dataset.url;
+      const shareText = btn.dataset.text || url;
       try {
-        await navigator.clipboard.writeText(url);
+        await navigator.clipboard.writeText(shareText);
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="bi bi-check"></i> Copied';
         setTimeout(() => {
@@ -1556,7 +1640,7 @@ function bindStudentResultLinkButtons() {
         }, 2000);
       } catch (err) {
         console.error("Failed to copy:", err);
-        window.prompt("Copy this link:", url);
+        window.prompt("Copy this message:", shareText);
       }
     });
   });
@@ -1564,11 +1648,12 @@ function bindStudentResultLinkButtons() {
   contentEl.querySelectorAll(".share-link-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const url = btn.dataset.url;
+      const text = btn.dataset.text || 'Check out this test report';
+      const title = btn.dataset.title || 'Test Report';
       try {
         await navigator.share({
-          title: 'Test Report',
-          text: 'Check out this test report',
-          url: url
+          title,
+          text
         });
       } catch (err) {
         console.error("Failed to share:", err);
