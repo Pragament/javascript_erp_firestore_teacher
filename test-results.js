@@ -1481,13 +1481,13 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
           <td class="student-results-name-cell">
             <a href="${links.reportUrl}" target="_blank">${escapeHtml(row.studentName)}</a>
           </td>
-          <td>${escapeHtml(row.phone)}</td>
           ${subjectCellsHtml}
           <td title="${row.metrics.correct} correct, ${row.metrics.wrong} wrong, ${row.metrics.skipped} skipped">${formatMarksValue(row.metrics.earnedMarks)}</td>
           <td>${row.rank}</td>
           <td>${row.percentile.toFixed(2)}</td>
           <td>${escapeHtml(row.grade)}</td>
           <td>${row.gpa.toFixed(2)}</td>
+          <td class="student-results-phone-cell">${escapeHtml(row.phone)}</td>
           <td class="student-results-actions-cell no-print">
             <a href="${links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
               <i class="bi bi-file-text"></i>
@@ -1528,13 +1528,13 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
               <th>${getStudentSortHeader("index", "#")}</th>
               <th>${getStudentSortHeader("roll", "Roll")}</th>
               <th>${getStudentSortHeader("name", "Name")}</th>
-              <th>Phone Number</th>
               ${subjectHeadersHtml}
               <th>${getStudentSortHeader("total", "Total")}</th>
               <th>${getStudentSortHeader("rank", "Rank")}</th>
               <th>${getStudentSortHeader("percentile", "Percentile")}</th>
               <th>${getStudentSortHeader("grade", "Grade")}</th>
               <th>${getStudentSortHeader("gpa", "GPA")}</th>
+              <th>Phone Number</th>
               <th class="no-print">Links</th>
             </tr>
           </thead>

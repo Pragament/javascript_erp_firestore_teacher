@@ -92,16 +92,15 @@
 .student-results-table thead th{background:#858585;color:white;font-weight:700;position:sticky;top:0;z-index:2}
 .student-results-table th:nth-child(1),.student-results-table td:nth-child(1){position:sticky;left:0;z-index:1;background:white;min-width:48px}
 .student-results-table thead th:nth-child(1){z-index:3;background:#858585;color:white}
-.student-results-table th:nth-child(2),.student-results-table td:nth-child(2){position:sticky;left:48px;z-index:1;background:white;min-width:70px}
-.student-results-table thead th:nth-child(2){z-index:3;background:#858585;color:white}
-.student-results-table th:nth-child(3),.student-results-table td:nth-child(3){position:sticky;left:118px;z-index:1;background:white;min-width:190px}
+.student-results-table th:nth-child(3),.student-results-table td:nth-child(3){position:sticky;left:48px;z-index:1;background:white;min-width:190px}
 .student-results-table thead th:nth-child(3){z-index:3;background:#858585;color:white}
 .student-results-name-cell{font-weight:600;text-align:left!important}
 .student-results-name-cell a{color:#111;text-decoration:none}
 .student-results-name-cell a:hover{color:#16a085;text-decoration:underline}
+.student-results-phone-cell{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:.92em}
 .student-results-actions-cell{min-width:174px}
 .student-results-actions-cell .btn{width:31px;height:31px;padding:.25rem;display:inline-flex;align-items:center;justify-content:center}
-@media (max-width:575.98px){.report-page.test-results-page{padding:.75rem}.student-results-table{font-size:.86rem}.student-results-table th,.student-results-table td{padding:.5rem .55rem}.student-results-table th:nth-child(1),.student-results-table td:nth-child(1){min-width:42px}.student-results-table th:nth-child(2),.student-results-table td:nth-child(2){left:42px;min-width:64px}.student-results-table th:nth-child(3),.student-results-table td:nth-child(3){left:106px;min-width:150px;max-width:150px;overflow:hidden;text-overflow:ellipsis}}
+@media (max-width:575.98px){.report-page.test-results-page{padding:.75rem}.student-results-table{font-size:.86rem}.student-results-table th,.student-results-table td{padding:.5rem .55rem}.student-results-table th:nth-child(1),.student-results-table td:nth-child(1){min-width:42px}.student-results-table th:nth-child(3),.student-results-table td:nth-child(3){left:42px;min-width:150px;max-width:150px;overflow:hidden;text-overflow:ellipsis}.student-results-phone-cell{font-size:.8rem;letter-spacing:0;max-width:128px;overflow:hidden;text-overflow:ellipsis}}
 .subject-question-header{border:0;background:transparent;color:inherit;font-weight:700;cursor:pointer;padding:0;min-width:28px}
 .subject-status-cell{color:white;font-weight:700;min-width:42px}
 .subject-status-right{background:#007a0b}
