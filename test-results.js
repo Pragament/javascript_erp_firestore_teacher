@@ -41,6 +41,10 @@ const testSelectEl = document.getElementById("test-select");
 const sortSelectEl = document.getElementById("sort-select");
 const subjectSelectEl = document.getElementById("subject-select");
 const resultsViewToggleEl = document.getElementById("results-view-toggle");
+const tableScoreControlsEl = document.getElementById("table-score-controls");
+const scoreCorrectInput = document.getElementById("scoreCorrect");
+const scoreWrongInput = document.getElementById("scoreWrong");
+const scoreSkippedInput = document.getElementById("scoreSkipped");
 
 let currentTestId = null;
 let availableTests = [];
@@ -49,6 +53,23 @@ let currentResultsData = [];
 let currentStudentsData = [];
 let currentQuestionPaperData = null;
 let currentResultsView = "table";
+
+const DEFAULT_SCORING_RULES = {
+  correct: 3,
+  wrong: -1,
+  skipped: 0,
+};
+const GRADE_SCALE = [
+  { min: 91, max: 100, grade: "A1", gradePoint: 10, pass: true },
+  { min: 81, max: 90, grade: "A2", gradePoint: 9, pass: true },
+  { min: 71, max: 80, grade: "B1", gradePoint: 8, pass: true },
+  { min: 61, max: 70, grade: "B2", gradePoint: 7, pass: true },
+  { min: 51, max: 60, grade: "C1", gradePoint: 6, pass: true },
+  { min: 41, max: 50, grade: "C2", gradePoint: 5, pass: true },
+  { min: 33, max: 40, grade: "D", gradePoint: 4, pass: true },
+  { min: 21, max: 32, grade: "E1", gradePoint: 0, pass: false },
+  { min: 0, max: 20, grade: "E2", gradePoint: 0, pass: false },
+];
 
 function setContentHtml(html) {
   contentEl.innerHTML = html;
@@ -127,6 +148,7 @@ function rowsToCSV(rows) {
 
 function showError(message) {
   setResultsViewToggleVisible(false);
+  setTableScoreControlsVisible(false);
   subtitleEl.textContent = message;
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
 }
@@ -139,6 +161,7 @@ function getDashboardSignInUrl() {
 function showSignInPrompt() {
   const message = "Please sign in from the teacher dashboard first.";
   setResultsViewToggleVisible(false);
+  setTableScoreControlsVisible(false);
   subtitleEl.textContent = message;
   setContentHtml(`
     <div class="alert alert-warning d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
@@ -361,6 +384,76 @@ function getSubjectCorrectCount(result, subject) {
   }, 0);
 }
 
+function parseScoreInput(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getCurrentScoringRules() {
+  return {
+    correct: parseScoreInput(scoreCorrectInput?.value, DEFAULT_SCORING_RULES.correct),
+    wrong: parseScoreInput(scoreWrongInput?.value, DEFAULT_SCORING_RULES.wrong),
+    skipped: parseScoreInput(scoreSkippedInput?.value, DEFAULT_SCORING_RULES.skipped),
+  };
+}
+
+function getQuestionRecordsForResult(result, subject = "") {
+  const normalizedSubject = normalizeComparable(subject);
+  return Object.keys(result || {}).reduce((records, key) => {
+    const match = key.match(/^(.+)_Q\d+$/i);
+    if (!match) return records;
+
+    const recordSubject = normalizeText(match[1], "General");
+    if (normalizedSubject && normalizeComparable(recordSubject) !== normalizedSubject) return records;
+
+    const rawStatus = result[key];
+    const status = isRightStatus(rawStatus) ? "correct" : isSkippedStatus(rawStatus) ? "skipped" : "wrong";
+    records.push({ subject: recordSubject, status });
+    return records;
+  }, []);
+}
+
+function getGradeDetails(marks) {
+  const normalizedMarks = Math.round(Math.max(0, Math.min(100, Number(marks) || 0)));
+  return GRADE_SCALE.find((entry) => normalizedMarks >= entry.min && normalizedMarks <= entry.max) || GRADE_SCALE[GRADE_SCALE.length - 1];
+}
+
+function calculatePerformanceMetrics(records, scoringRules) {
+  const counts = { correct: 0, wrong: 0, skipped: 0, total: 0 };
+
+  (records || []).forEach((record) => {
+    const status = record.status || "wrong";
+    if (status === "correct") counts.correct += 1;
+    else if (status === "skipped") counts.skipped += 1;
+    else counts.wrong += 1;
+    counts.total += 1;
+  });
+
+  const maxMarksPerQuestion = Math.max(Number(scoringRules.correct) || 0, 1);
+  const earnedMarks =
+    counts.correct * (Number(scoringRules.correct) || 0) +
+    counts.wrong * (Number(scoringRules.wrong) || 0) +
+    counts.skipped * (Number(scoringRules.skipped) || 0);
+  const maxMarks = counts.total * maxMarksPerQuestion;
+  const marks = maxMarks > 0 ? Math.max(0, Math.min(100, (earnedMarks / maxMarks) * 100)) : 0;
+  const grade = getGradeDetails(marks);
+
+  return {
+    ...counts,
+    earnedMarks,
+    maxMarks,
+    marks,
+    grade: grade.grade,
+    gradePoint: grade.gradePoint,
+    passed: grade.pass,
+  };
+}
+
+function formatMarksValue(value) {
+  const rounded = Math.round((Number(value) || 0) * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
+
 function getStudentByIdMap(students) {
   const entries = [];
   students.forEach((student) => {
@@ -375,21 +468,14 @@ function getResultStudent(result, studentById) {
 }
 
 function getResultGrade(percent) {
-  const score = Number(percent) || 0;
-  if (score >= 90) return "A+";
-  if (score >= 80) return "A";
-  if (score >= 70) return "B+";
-  if (score >= 60) return "B";
-  if (score >= 50) return "C+";
-  if (score >= 40) return "C";
-  return "D";
+  return getGradeDetails(percent).grade;
 }
 
 function getResultGpa(result, percent) {
   const explicitGpa = result?.gpa ?? result?.GPA ?? result?.gradePoint ?? result?.grade_point;
   const parsed = Number(explicitGpa);
   if (Number.isFinite(parsed)) return parsed.toFixed(2).replace(/\.00$/, ".0");
-  return (Math.max(0, Math.min(100, Number(percent) || 0)) / 10).toFixed(2);
+  return getGradeDetails(percent).gradePoint.toFixed(2);
 }
 
 function getStudentResultLinks(result, student, test) {
@@ -419,6 +505,11 @@ function setResultsViewToggleVisible(visible) {
   resultsViewToggleEl.querySelectorAll("[data-results-view]").forEach((button) => {
     button.classList.toggle("active", button.dataset.resultsView === currentResultsView);
   });
+}
+
+function setTableScoreControlsVisible(visible) {
+  if (!tableScoreControlsEl) return;
+  tableScoreControlsEl.classList.toggle("d-none", !visible);
 }
 
 async function fetchTeacherSections(email) {
@@ -894,6 +985,7 @@ function initPromptCopyButtons(root = document) {
 
 function renderSubjectResults(test, results, students, questionPaper, subjectId) {
   setResultsViewToggleVisible(false);
+  setTableScoreControlsVisible(false);
   const questions = getSubjectQuestions(test, questionPaper, subjectId);
   const studentById = new Map(students.map((student) => [student.studentId || student.id, student]));
   const sortedResults = [...results].sort((a, b) => {
@@ -1006,9 +1098,16 @@ function renderStudentResults(test, results, students, sortOption = "score-desc"
   }
 
   const studentById = getStudentByIdMap(students);
+  const scoringRules = getCurrentScoringRules();
   const rankRows = [...results]
-    .map((result) => ({ result, score: calculateScore(result) }))
-    .sort((a, b) => b.score - a.score);
+    .map((result) => ({
+      result,
+      metrics: calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules),
+    }))
+    .sort((a, b) => {
+      if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
+      return b.metrics.marks - a.metrics.marks;
+    });
   const rankByResultId = new Map(rankRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
 
   const sortedResults = [...results].sort((a, b) => {
@@ -1016,8 +1115,8 @@ function renderStudentResults(test, results, students, sortOption = "score-desc"
     const studentB = getResultStudent(b, studentById);
     const nameA = studentA?.name || a.name || a.studentId || "";
     const nameB = studentB?.name || b.name || b.studentId || "";
-    const scoreA = calculateScore(a);
-    const scoreB = calculateScore(b);
+    const metricsA = calculatePerformanceMetrics(getQuestionRecordsForResult(a), scoringRules);
+    const metricsB = calculatePerformanceMetrics(getQuestionRecordsForResult(b), scoringRules);
 
     switch (sortOption) {
       case "name-asc":
@@ -1025,9 +1124,11 @@ function renderStudentResults(test, results, students, sortOption = "score-desc"
       case "name-desc":
         return nameB.localeCompare(nameA);
       case "score-asc":
-        return scoreA - scoreB;
+        if (metricsA.earnedMarks !== metricsB.earnedMarks) return metricsA.earnedMarks - metricsB.earnedMarks;
+        return metricsA.marks - metricsB.marks;
       case "score-desc":
-        return scoreB - scoreA;
+        if (metricsB.earnedMarks !== metricsA.earnedMarks) return metricsB.earnedMarks - metricsA.earnedMarks;
+        return metricsB.marks - metricsA.marks;
       default:
         return nameA.localeCompare(nameB);
     }
@@ -1038,10 +1139,11 @@ function renderStudentResults(test, results, students, sortOption = "score-desc"
     return;
   }
 
-  renderStudentTable(test, sortedResults, studentById, rankByResultId);
+  renderStudentTable(test, sortedResults, studentById, rankByResultId, scoringRules);
 }
 
-function renderStudentTable(test, sortedResults, studentById, rankByResultId) {
+function renderStudentTable(test, sortedResults, studentById, rankByResultId, scoringRules) {
+  setTableScoreControlsVisible(true);
   const subjects = getSubjectColumns(test, currentQuestionPaperData, sortedResults);
   const totalStudents = sortedResults.length;
   const subjectHeadersHtml = subjects.map((subject) => `<th>${escapeHtml(subject)}</th>`).join("");
@@ -1050,12 +1152,16 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId) {
     .map((result, index) => {
       const student = getResultStudent(result, studentById);
       const studentName = student?.name || result.name || "Unknown";
-      const scoreDetails = calculateScoreDetails(result);
+      const scoreDetails = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
       const rank = rankByResultId.get(result.id || result.studentId) || index + 1;
       const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
       const links = getStudentResultLinks(result, student, test);
       const subjectCellsHtml = subjects
-        .map((subject) => `<td>${getSubjectCorrectCount(result, subject)}</td>`)
+        .map((subject) => {
+          const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules);
+          const title = `${subjectMetrics.correct} correct, ${subjectMetrics.wrong} wrong, ${subjectMetrics.skipped} skipped`;
+          return `<td title="${escapeHtml(title)}">${formatMarksValue(subjectMetrics.earnedMarks)}</td>`;
+        })
         .join("");
 
       return `
@@ -1066,11 +1172,11 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId) {
             <a href="${links.reportUrl}" target="_blank">${escapeHtml(studentName)}</a>
           </td>
           ${subjectCellsHtml}
-          <td>${scoreDetails.correct}</td>
+          <td title="${scoreDetails.correct} correct, ${scoreDetails.wrong} wrong, ${scoreDetails.skipped} skipped">${formatMarksValue(scoreDetails.earnedMarks)}</td>
           <td>${rank}</td>
           <td>${percentile.toFixed(2)}</td>
-          <td>${escapeHtml(getResultGrade(scoreDetails.percent))}</td>
-          <td>${escapeHtml(getResultGpa(result, scoreDetails.percent))}</td>
+          <td>${escapeHtml(getResultGrade(scoreDetails.marks))}</td>
+          <td>${escapeHtml(getResultGpa(result, scoreDetails.marks))}</td>
           <td class="student-results-actions-cell no-print">
             <a href="${links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
               <i class="bi bi-file-text"></i>
@@ -1126,6 +1232,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId) {
 }
 
 function renderStudentCards(test, sortedResults, studentById) {
+  setTableScoreControlsVisible(false);
   const cardsHtml = sortedResults
     .map((result) => {
       const student = getResultStudent(result, studentById);
@@ -1233,6 +1340,16 @@ async function initializePage() {
       });
       setResultsViewToggleVisible(false);
     }
+    [scoreCorrectInput, scoreWrongInput, scoreSkippedInput].forEach((input) => {
+      if (!input || input.dataset.bound) return;
+      input.dataset.bound = "true";
+      input.addEventListener("input", () => {
+        if (currentTestData && currentResultsData.length > 0 && currentResultsView === "table" && !getSubjectIdFromQuery()) {
+          renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+        }
+      });
+    });
+    setTableScoreControlsVisible(false);
     // Setup sort change listener
     if (sortSelectEl) {
       sortSelectEl.onchange = (e) => {

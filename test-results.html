@@ -53,6 +53,25 @@
                     </button>
                 </div>
             </div>
+            <div id="table-score-controls" class="border-top px-3 py-3 d-none">
+                <div class="row g-2 align-items-end">
+                    <div class="col-4 col-md-2">
+                        <label class="form-label small text-muted mb-1" for="scoreCorrect">Correct</label>
+                        <input class="form-control form-control-sm" id="scoreCorrect" type="number" step="0.5" value="3">
+                    </div>
+                    <div class="col-4 col-md-2">
+                        <label class="form-label small text-muted mb-1" for="scoreWrong">Wrong</label>
+                        <input class="form-control form-control-sm" id="scoreWrong" type="number" step="0.5" value="-1">
+                    </div>
+                    <div class="col-4 col-md-2">
+                        <label class="form-label small text-muted mb-1" for="scoreSkipped">Skipped</label>
+                        <input class="form-control form-control-sm" id="scoreSkipped" type="number" step="0.5" value="0">
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted">Table marks, rank, grade, and GPA recalculate using these values.</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div id="test-results-content">
