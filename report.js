@@ -646,6 +646,21 @@ let currentSingleTestAIContext = null;
 let reportAIChatPanel = null;
 let ctsStatsDataTable = null;
 let statsDataTables = {};
+const CTS_PROGRESS_HEADERS = [
+  "Subject",
+  "Chapter",
+  "Topic",
+  "Subtopic",
+  "Tests",
+  "Correct",
+  "Wrong",
+  "Skipped",
+  "Questions",
+  "Average",
+  "Best",
+  "Latest",
+  "Trend",
+];
 const DEFAULT_SCORING_RULES = {
   correct: 3,
   wrong: -1,
@@ -3668,19 +3683,7 @@ function renderChapterTopicSubtopicProgressSummaryTable(ctsSummary, hideNoErrors
       <table id="ctsProgressTable" class="table table-sm align-middle mb-0">
         <thead>
           <tr>
-            <th>Subject</th>
-            <th>Chapter</th>
-            <th>Topic</th>
-            <th>Subtopic</th>
-            <th>Tests</th>
-            <th>Correct</th>
-            <th>Wrong</th>
-            <th>Skipped</th>
-            <th>Questions</th>
-            <th>Average</th>
-            <th>Best</th>
-            <th>Latest</th>
-            <th>Trend</th>
+            ${CTS_PROGRESS_HEADERS.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
@@ -4389,6 +4392,14 @@ function initCTSProgressTable(ctsSummary) {
 
   if (!table || !container) return;
 
+  const closedDetails = table.closest("details:not([open])");
+  if (closedDetails) {
+    closedDetails.addEventListener("toggle", () => {
+      if (closedDetails.open) initCTSProgressTable(ctsSummary);
+    }, { once: true });
+    return;
+  }
+
   if (ctsStatsDataTable) {
     ctsStatsDataTable.destroy();
     ctsStatsDataTable = null;
@@ -4416,6 +4427,7 @@ function initCTSProgressTable(ctsSummary) {
         { select: 12, type: "number", sort: "desc" }, // Trend
       ],
     });
+    restoreDataTableHeaderLabels(table, CTS_PROGRESS_HEADERS);
   }
 
   if (toggle) {
@@ -4431,6 +4443,24 @@ function initCTSProgressTable(ctsSummary) {
 
     toggle.addEventListener("change", rebuildTable);
   }
+}
+
+function restoreDataTableHeaderLabels(table, labels) {
+  const headers = Array.from(table?.querySelectorAll("thead th") || []);
+  headers.forEach((header, index) => {
+    const label = labels[index] || "";
+    if (!label) return;
+
+    const sorter = header.querySelector(".datatable-sorter");
+    if (sorter && !sorter.textContent.trim()) {
+      sorter.textContent = label;
+      return;
+    }
+
+    if (!header.textContent.trim()) {
+      header.textContent = label;
+    }
+  });
 }
 
 function initSubjectProgressChart(studentId, rows, subjectSummary) {
@@ -4663,6 +4693,15 @@ function initStudentProgressChart(studentId, rows) {
 function initResultsTable() {
   const table = document.getElementById("testsTable");
   if (!table) return;
+  const headerLabels = Array.from(table.querySelectorAll("thead th")).map((header) => header.textContent.trim());
+  const closedDetails = table.closest("details:not([open])");
+  if (closedDetails) {
+    closedDetails.addEventListener("toggle", () => {
+      if (closedDetails.open) initResultsTable();
+    }, { once: true });
+    return;
+  }
+
   if (window.simpleDatatables?.DataTable) {
     // eslint-disable-next-line no-new
     new window.simpleDatatables.DataTable(table, {
@@ -4678,6 +4717,7 @@ function initResultsTable() {
         },
       ],
     });
+    restoreDataTableHeaderLabels(table, headerLabels);
   }
 }
 
