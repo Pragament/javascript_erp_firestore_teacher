@@ -4092,8 +4092,7 @@ function renderStudentProgress(student, studentId, rows) {
     structuredData,
   });
 
-  const tableRowsHtml = [...rows]
-    .sort((a, b) => {
+  const sortedTestRows = [...rows].sort((a, b) => {
       const at = a.dateObj?.getTime?.();
       const bt = b.dateObj?.getTime?.();
       const aValid = typeof at === "number" && !Number.isNaN(at);
@@ -4102,7 +4101,48 @@ function renderStudentProgress(student, studentId, rows) {
       if (aValid) return -1;
       if (bValid) return 1;
       return String(a.testName).localeCompare(String(b.testName));
+    });
+  const chronologicalRows = [...rows].sort((a, b) => {
+    const at = a.dateObj?.getTime?.();
+    const bt = b.dateObj?.getTime?.();
+    const aValid = typeof at === "number" && !Number.isNaN(at);
+    const bValid = typeof bt === "number" && !Number.isNaN(bt);
+    if (aValid && bValid) return at - bt;
+    if (aValid) return -1;
+    if (bValid) return 1;
+    return String(a.testName).localeCompare(String(b.testName));
+  });
+  const firstScore = chronologicalRows.length ? Number(chronologicalRows[0].percent) || 0 : 0;
+  const latestRow = sortedTestRows[0] || null;
+  const trend = taken >= 2 ? latest - firstScore : 0;
+  const progressMessage = getParentScoreMessage(latest || avg);
+  const weakSubjects = [...subjectSummary]
+    .sort((a, b) => {
+      if (a.averagePercent !== b.averagePercent) return a.averagePercent - b.averagePercent;
+      return (b.wrong + b.skipped) - (a.wrong + a.skipped);
     })
+    .slice(0, 4);
+  const recentTestsHtml = sortedTestRows.slice(0, 5)
+    .map((r) => {
+      const reportHref = `report.html?testId=${encodeURIComponent(r.testId)}&studentId=${encodeURIComponent(studentId)}`;
+      const score = Number(r.percent) || 0;
+      return `
+        <div class="parent-report-subject-row">
+          <div>
+            <div class="fw-semibold">${escapeHtml(r.testName || "Test")}</div>
+            <div class="small text-muted">${escapeHtml(formatDate(r.dateObj, r.testDateRaw))}</div>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <span class="parent-report-subject-score">${score}%</span>
+            <a class="btn btn-sm btn-outline-secondary no-print" href="${reportHref}" target="_blank" rel="noopener" title="Open test report">
+              <i class="bi bi-file-text"></i>
+            </a>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  const tableRowsHtml = sortedTestRows
     .map((r) => {
       const displayDate = formatDate(r.dateObj, r.testDateRaw);
       const sortableDate = r.dateObj && !Number.isNaN(r.dateObj.getTime())
@@ -4155,71 +4195,136 @@ function renderStudentProgress(student, studentId, rows) {
     .join("");
 
   setReportHtml(`
+    <div class="card shadow-sm mb-3 parent-report-hero parent-report-hero-${progressMessage.className}">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+          <div>
+            <div class="text-muted small mb-1">All Tests Progress Report</div>
+            <h4 class="fw-bold mb-1">${escapeHtml(student.name || "Student")}</h4>
+            <div class="parent-report-subtitle">
+              ${taken} test${taken === 1 ? "" : "s"} taken
+              ${latestRow ? ` &middot; Latest: ${escapeHtml(formatDate(latestRow.dateObj, latestRow.testDateRaw))}` : ""}
+            </div>
+            <div class="small text-muted mt-2">
+              ID: ${escapeHtml(student.studentId || studentId)}
+              ${student.phone ? ` &middot; Phone: ${escapeHtml(normalizePhone(student.phone))}` : ""}
+            </div>
+          </div>
+          <div class="parent-report-score">
+            <div class="parent-report-percent">${latest}%</div>
+            <div class="parent-report-scoreline">Latest score</div>
+          </div>
+        </div>
+        <div class="row g-2 mt-3 parent-report-counts">
+          <div class="col-4"><div class="parent-report-count parent-report-count-good"><strong>${avg}%</strong><span>Average</span></div></div>
+          <div class="col-4"><div class="parent-report-count parent-report-count-good"><strong>${best}%</strong><span>Best</span></div></div>
+          <div class="col-4"><div class="parent-report-count ${trend >= 0 ? "parent-report-count-good" : "parent-report-count-bad"}"><strong>${trend >= 0 ? "+" : ""}${trend}%</strong><span>First to latest</span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3 parent-report-next-step">
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-lg-5">
+            <div class="small text-muted mb-1">Simple Meaning</div>
+            <h5 class="fw-bold mb-2">${escapeHtml(progressMessage.title)}</h5>
+            <p class="mb-0">${escapeHtml(progressMessage.text)}</p>
+          </div>
+          <div class="col-lg-7">
+            <div class="small text-muted mb-2">Revise First</div>
+            ${weakSubjects.length ? `
+              <div class="parent-report-chip-list">
+                ${weakSubjects.map((subject) => `
+                  <span class="parent-report-chip">
+                    ${escapeHtml(subject.subject)}
+                    <strong>${subject.averagePercent.toFixed(0)}%</strong>
+                  </span>
+                `).join("")}
+              </div>
+            ` : `<div class="text-muted small">No subject data available yet.</div>`}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-3">
+          <div>
+            <h5 class="fw-bold mb-1">Subject Priority</h5>
+            <p class="text-muted small mb-0">Lowest average subjects are shown first.</p>
+          </div>
+          <div class="small text-muted">${improvingSubjectCount}/${consistentSubjectCount || subjectSummary.length} subjects improving</div>
+        </div>
+        ${weakSubjects.length ? `
+          <div class="parent-report-subject-list">
+            ${weakSubjects.map((subject) => `
+              <div class="parent-report-subject-row">
+                <div>
+                  <div class="fw-semibold">${escapeHtml(subject.subject)}</div>
+                  <div class="small text-muted">${subject.testsTaken} test${subject.testsTaken === 1 ? "" : "s"}, latest ${subject.latestPercent.toFixed(1)}%, trend ${subject.improvement >= 0 ? "+" : ""}${subject.improvement.toFixed(1)}%</div>
+                </div>
+                <div class="parent-report-subject-score">${subject.averagePercent.toFixed(1)}%</div>
+              </div>
+            `).join("")}
+          </div>
+        ` : `<div class="text-muted small">No subject-wise progress data available yet.</div>`}
+      </div>
+    </div>
+
     <div class="card shadow-sm mb-4">
       <div class="card-body">
-        <div class="row">
-          <div class="col-md-6">
-            <h5 class="fw-bold mb-3">Student Information</h5>
-            <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
-            <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId)}</p>
-${renderStudentPhone(student.phone)}
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-3">
+          <div>
+            <h5 class="fw-bold mb-1">Recent Tests</h5>
+            <p class="text-muted small mb-0">Most recent tests are shown first. Open any test for full question details.</p>
           </div>
-          <div class="col-md-6">
-            <h5 class="fw-bold mb-3">Progress Summary</h5>
-            <p><strong>Tests Taken:</strong> ${escapeHtml(taken)}</p>
-            <p><strong>Average Score:</strong> ${escapeHtml(avg)}%</p>
-            <p><strong>Best Score:</strong> ${escapeHtml(best)}%</p>
-            <p class="mb-0"><strong>Latest Score:</strong> ${escapeHtml(latest)}%</p>
-          </div>
+          <button id="exportProgressCSV" class="btn btn-sm no-print align-self-start" style="background:#16a085;color:white;border:none">
+            <i class="bi bi-download"></i> Export Excel
+          </button>
         </div>
+        <div class="parent-report-subject-list mb-3">
+          ${recentTestsHtml || `<div class="text-muted small">No tests available.</div>`}
+        </div>
+        <details class="report-collapse border rounded">
+          <summary class="report-collapse-summary">
+            <span><i class="bi bi-table me-2"></i>Show All Tests Table</span>
+            <i class="bi bi-chevron-down"></i>
+          </summary>
+          <div class="p-3">
+            <div class="table-responsive">
+              <table id="testsTable" class="table table-striped align-middle">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Test</th>
+                    <th>Total Score</th>
+                    <th>Correct</th>
+                    ${subjectColumnHeaders.map((subjectName) => `<th>${escapeHtml(subjectName)}</th>`).join("")}
+                    <th>Report</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tableRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
 
-    <div class="row g-3 mb-4">
-      <div class="col-md-6 col-xl-3">
-        <div class="card shadow-sm h-100 report-stat-card">
-          <div class="card-body">
-            <div class="text-muted small mb-1">Subjects Tracked</div>
-            <div class="report-stat-value">${subjectSummary.length}</div>
-            <div class="small text-muted">Subjects seen across all tests</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-6 col-xl-3">
-        <div class="card shadow-sm h-100 report-stat-card">
-          <div class="card-body">
-            <div class="text-muted small mb-1">Strongest Subject</div>
-            <div class="report-stat-value" style="font-size:1.35rem">${escapeHtml(strongestSubject?.subject || "—")}</div>
-            <div class="small text-muted">${strongestSubject ? `${strongestSubject.averagePercent.toFixed(1)}% average` : "No subject data yet"}</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-6 col-xl-3">
-        <div class="card shadow-sm h-100 report-stat-card">
-          <div class="card-body">
-            <div class="text-muted small mb-1">Needs Attention</div>
-            <div class="report-stat-value" style="font-size:1.35rem">${escapeHtml(needsAttentionSubject?.subject || "—")}</div>
-            <div class="small text-muted">${needsAttentionSubject ? `${needsAttentionSubject.averagePercent.toFixed(1)}% average` : "No subject data yet"}</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-6 col-xl-3">
-        <div class="card shadow-sm h-100 report-stat-card">
-          <div class="card-body">
-            <div class="text-muted small mb-1">Improving Subjects</div>
-            <div class="report-stat-value">${improvingSubjectCount}</div>
-            <div class="small text-muted">${consistentSubjectCount} subjects have 2+ tests to compare</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card shadow-sm mb-4">
+    <details class="report-collapse card shadow-sm mb-4 no-print">
+      <summary class="report-collapse-summary">
+        <span><i class="bi bi-graph-up me-2"></i>Charts and Detailed Progress</span>
+        <i class="bi bi-chevron-down"></i>
+      </summary>
       <div class="card-body">
         <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
           <div>
             <h5 class="fw-bold mb-1">Progress Across Tests</h5>
-            <small class="text-muted">Compare total score and subject-wise score by test date. Click a point or bar to open that test report.</small>
+            <small class="text-muted">Compare total score and subject-wise score by test date.</small>
           </div>
           <div class="d-flex gap-2 align-items-center">
             <label class="small text-muted mb-0" for="subjectProgressChartType">Chart Type</label>
@@ -4232,61 +4337,42 @@ ${renderStudentPhone(student.phone)}
         <div style="height:360px">
           <canvas id="subjectProgressChart"></canvas>
         </div>
-      </div>
-    </div>
-
-    <div class="card shadow-sm mb-4">
-      <div class="card-body">
+        <hr>
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h5 class="fw-bold mb-0">Subject-wise Progress Stats</h5>
-          <small class="text-muted">Average, best, latest, and trend across tests for each subject.</small>
+          <small class="text-muted">Average, best, latest, and trend for each subject.</small>
         </div>
         <div id="subjectProgressSummaryTable">
           ${renderSubjectProgressSummaryTable(subjectSummary)}
         </div>
       </div>
-    </div>
+    </details>
 
-    <div class="card shadow-sm mb-4">
+    <details class="report-collapse card shadow-sm mb-4 no-print">
+      <summary class="report-collapse-summary">
+        <span><i class="bi bi-list-check me-2"></i>Chapter, Topic, and Subtopic Details</span>
+        <i class="bi bi-chevron-down"></i>
+      </summary>
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h5 class="fw-bold mb-0">Chapter/Topic/Subtopic Progress Stats</h5>
-          <small class="text-muted">Progress across tests for topics that appear in multiple tests.</small>
+          <small class="text-muted">Topics appearing in multiple tests.</small>
         </div>
         <div id="ctsProgressSummaryTable">
           ${renderChapterTopicSubtopicProgressSummaryTable(ctsSummary)}
         </div>
       </div>
-    </div>
+    </details>
 
-    <div class="card shadow-sm">
+    <details class="report-collapse card shadow-sm mb-4 no-print">
+      <summary class="report-collapse-summary">
+        <span><i class="bi bi-chat-dots me-2"></i>AI Prompts and Study Help</span>
+        <i class="bi bi-chevron-down"></i>
+      </summary>
       <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="fw-bold mb-0">All Tests</h5>
-          <button id="exportProgressCSV" class="btn btn-sm no-print" style="background:#16a085;color:white;border:none">
-            <i class="bi bi-download"></i> Export Excel
-          </button>
-        </div>
         ${buildStudentProgressPromptCardsHtml(student, rows, subjectSummary, ctsSummary)}
-        <div class="table-responsive">
-          <table id="testsTable" class="table table-striped align-middle">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Test</th>
-                <th>Total Score</th>
-                <th>Correct</th>
-                ${subjectColumnHeaders.map((subjectName) => `<th>${escapeHtml(subjectName)}</th>`).join("")}
-                <th>Report</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tableRowsHtml}
-            </tbody>
-          </table>
-        </div>
       </div>
-    </div>
+    </details>
   `);
 
   initSubjectProgressChart(studentId, rows, subjectSummary);
@@ -4502,6 +4588,11 @@ function initSubjectProgressChart(studentId, rows, subjectSummary) {
 
   chartTypeSelect.addEventListener("change", drawChart);
   drawChart();
+  document.querySelectorAll(".report-collapse").forEach((details) => {
+    details.addEventListener("toggle", () => {
+      if (details.open) window.setTimeout(() => chart?.resize?.(), 0);
+    });
+  });
   window.__studentSubjectProgressChart = chart;
 }
 
