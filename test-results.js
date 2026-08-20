@@ -40,6 +40,7 @@ const subtitleEl = document.getElementById("test-results-subtitle");
 const testSelectEl = document.getElementById("test-select");
 const sortSelectEl = document.getElementById("sort-select");
 const subjectSelectEl = document.getElementById("subject-select");
+const resultsViewToggleEl = document.getElementById("results-view-toggle");
 
 let currentTestId = null;
 let availableTests = [];
@@ -47,6 +48,7 @@ let currentTestData = null;
 let currentResultsData = [];
 let currentStudentsData = [];
 let currentQuestionPaperData = null;
+let currentResultsView = "table";
 
 function setContentHtml(html) {
   contentEl.innerHTML = html;
@@ -124,6 +126,7 @@ function rowsToCSV(rows) {
 }
 
 function showError(message) {
+  setResultsViewToggleVisible(false);
   subtitleEl.textContent = message;
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
 }
@@ -135,6 +138,7 @@ function getDashboardSignInUrl() {
 
 function showSignInPrompt() {
   const message = "Please sign in from the teacher dashboard first.";
+  setResultsViewToggleVisible(false);
   subtitleEl.textContent = message;
   setContentHtml(`
     <div class="alert alert-warning d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
@@ -325,6 +329,96 @@ function getAvailableSubjects(test, questionPaper) {
   });
 
   return Array.from(subjects.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function getSubjectColumns(test, questionPaper, results) {
+  const subjects = new Map();
+
+  getAvailableSubjects(test, questionPaper).forEach((subject) => {
+    const key = normalizeComparable(subject);
+    if (key) subjects.set(key, subject);
+  });
+
+  results.forEach((result) => {
+    Object.keys(result || {}).forEach((key) => {
+      const match = key.match(/^(.+)_Q\d+$/i);
+      if (!match) return;
+      const subject = normalizeText(match[1]);
+      const normalized = normalizeComparable(subject);
+      if (normalized && !subjects.has(normalized)) subjects.set(normalized, subject);
+    });
+  });
+
+  return Array.from(subjects.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function getSubjectCorrectCount(result, subject) {
+  const normalizedSubject = normalizeComparable(subject);
+  return Object.keys(result || {}).reduce((count, key) => {
+    const match = key.match(/^(.+)_Q\d+$/i);
+    if (!match || normalizeComparable(match[1]) !== normalizedSubject) return count;
+    return isRightStatus(result[key]) ? count + 1 : count;
+  }, 0);
+}
+
+function getStudentByIdMap(students) {
+  const entries = [];
+  students.forEach((student) => {
+    if (student.id) entries.push([student.id, student]);
+    if (student.studentId) entries.push([student.studentId, student]);
+  });
+  return new Map(entries);
+}
+
+function getResultStudent(result, studentById) {
+  return studentById.get(result.studentId) || studentById.get(result.id) || null;
+}
+
+function getResultGrade(percent) {
+  const score = Number(percent) || 0;
+  if (score >= 90) return "A+";
+  if (score >= 80) return "A";
+  if (score >= 70) return "B+";
+  if (score >= 60) return "B";
+  if (score >= 50) return "C+";
+  if (score >= 40) return "C";
+  return "D";
+}
+
+function getResultGpa(result, percent) {
+  const explicitGpa = result?.gpa ?? result?.GPA ?? result?.gradePoint ?? result?.grade_point;
+  const parsed = Number(explicitGpa);
+  if (Number.isFinite(parsed)) return parsed.toFixed(2).replace(/\.00$/, ".0");
+  return (Math.max(0, Math.min(100, Number(percent) || 0)) / 10).toFixed(2);
+}
+
+function getStudentResultLinks(result, student, test) {
+  const studentId = result.studentId || result.id || "";
+  const studentName = student?.name || result.name || "Unknown";
+  const studentPhone = student?.phone || "";
+  const currentSectionId = test.sectionId || getSectionIdFromQuery() || "";
+  const reportUrl = `report.html?studentId=${encodeURIComponent(studentId)}&testId=${encodeURIComponent(test.id)}&sectionId=${encodeURIComponent(currentSectionId)}`;
+  const progressUrl = `report.html?studentId=${encodeURIComponent(studentId)}&sectionId=${encodeURIComponent(currentSectionId)}`;
+  const reportLink = `${window.location.origin}/${progressUrl}`;
+  const message = `Hi ${studentName}, your test report: ${reportLink}`;
+  const whatsappBase = studentPhone
+    ? `https://wa.me/${studentPhone.replace(/\D/g, "")}`
+    : "https://wa.me/";
+
+  return {
+    reportUrl,
+    progressUrl,
+    whatsappUrl: `${whatsappBase}?text=${encodeURIComponent(message)}`,
+    shareUrl: `${window.location.origin}/${reportUrl}`,
+  };
+}
+
+function setResultsViewToggleVisible(visible) {
+  if (!resultsViewToggleEl) return;
+  resultsViewToggleEl.classList.toggle("d-none", !visible);
+  resultsViewToggleEl.querySelectorAll("[data-results-view]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.resultsView === currentResultsView);
+  });
 }
 
 async function fetchTeacherSections(email) {
@@ -799,6 +893,7 @@ function initPromptCopyButtons(root = document) {
 }
 
 function renderSubjectResults(test, results, students, questionPaper, subjectId) {
+  setResultsViewToggleVisible(false);
   const questions = getSubjectQuestions(test, questionPaper, subjectId);
   const studentById = new Map(students.map((student) => [student.studentId || student.id, student]));
   const sortedResults = [...results].sort((a, b) => {
@@ -901,19 +996,24 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
   });
 }
 
-function renderStudentResults(test, results, students, sortOption = "name-asc") {
+function renderStudentResults(test, results, students, sortOption = "score-desc") {
   subtitleEl.textContent = `${test.testName || "Test"} | ${results.length} student result${results.length === 1 ? "" : "s"}`;
+  setResultsViewToggleVisible(true);
 
   if (results.length === 0) {
     setContentHtml('<div class="alert alert-warning">No student results found for this test yet.</div>');
     return;
   }
 
-  const studentById = new Map(students.map((student) => [student.studentId, student]));
+  const studentById = getStudentByIdMap(students);
+  const rankRows = [...results]
+    .map((result) => ({ result, score: calculateScore(result) }))
+    .sort((a, b) => b.score - a.score);
+  const rankByResultId = new Map(rankRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
 
   const sortedResults = [...results].sort((a, b) => {
-    const studentA = studentById.get(a.studentId);
-    const studentB = studentById.get(b.studentId);
+    const studentA = getResultStudent(a, studentById);
+    const studentB = getResultStudent(b, studentById);
     const nameA = studentA?.name || a.name || a.studentId || "";
     const nameB = studentB?.name || b.name || b.studentId || "";
     const scoreA = calculateScore(a);
@@ -933,27 +1033,105 @@ function renderStudentResults(test, results, students, sortOption = "name-asc") 
     }
   });
 
+  if (currentResultsView === "cards") {
+    renderStudentCards(test, sortedResults, studentById);
+    return;
+  }
+
+  renderStudentTable(test, sortedResults, studentById, rankByResultId);
+}
+
+function renderStudentTable(test, sortedResults, studentById, rankByResultId) {
+  const subjects = getSubjectColumns(test, currentQuestionPaperData, sortedResults);
+  const totalStudents = sortedResults.length;
+  const subjectHeadersHtml = subjects.map((subject) => `<th>${escapeHtml(subject)}</th>`).join("");
+
+  const rowsHtml = sortedResults
+    .map((result, index) => {
+      const student = getResultStudent(result, studentById);
+      const studentName = student?.name || result.name || "Unknown";
+      const scoreDetails = calculateScoreDetails(result);
+      const rank = rankByResultId.get(result.id || result.studentId) || index + 1;
+      const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
+      const links = getStudentResultLinks(result, student, test);
+      const subjectCellsHtml = subjects
+        .map((subject) => `<td>${getSubjectCorrectCount(result, subject)}</td>`)
+        .join("");
+
+      return `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${escapeHtml(getRollNumber(student, result))}</td>
+          <td class="student-results-name-cell">
+            <a href="${links.reportUrl}" target="_blank">${escapeHtml(studentName)}</a>
+          </td>
+          ${subjectCellsHtml}
+          <td>${scoreDetails.correct}</td>
+          <td>${rank}</td>
+          <td>${percentile.toFixed(2)}</td>
+          <td>${escapeHtml(getResultGrade(scoreDetails.percent))}</td>
+          <td>${escapeHtml(getResultGpa(result, scoreDetails.percent))}</td>
+          <td class="student-results-actions-cell no-print">
+            <a href="${links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
+              <i class="bi bi-file-text"></i>
+            </a>
+            <a href="${links.progressUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="Progress across all tests">
+              <i class="bi bi-graph-up"></i>
+            </a>
+            <a href="${links.whatsappUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="WhatsApp all tests">
+              <i class="bi bi-whatsapp"></i>
+            </a>
+            ${navigator.share ? `<button type="button"
+               class="btn btn-sm btn-outline-secondary share-link-btn"
+               data-url="${links.shareUrl}"
+               title="Share this test">
+              <i class="bi bi-share"></i>
+            </button>` : `<button type="button"
+               class="btn btn-sm btn-outline-secondary copy-link-btn"
+               data-url="${links.shareUrl}"
+               title="Copy this test link">
+              <i class="bi bi-link"></i>
+            </button>`}
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  setContentHtml(`
+    <div class="student-results-table-wrap">
+      <div class="student-results-table-scroll">
+        <table class="student-results-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Roll</th>
+              <th>Name</th>
+              ${subjectHeadersHtml}
+              <th>Total</th>
+              <th>Rank</th>
+              <th>Percentile</th>
+              <th>Grade</th>
+              <th>GPA</th>
+              <th class="no-print">Links</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+    </div>
+  `);
+
+  bindStudentResultLinkButtons();
+}
+
+function renderStudentCards(test, sortedResults, studentById) {
   const cardsHtml = sortedResults
     .map((result) => {
-      const student = studentById.get(result.studentId);
+      const student = getResultStudent(result, studentById);
       const studentName = student?.name || result.name || "Unknown";
-      const studentPhone = student?.phone || "";
       const score = calculateScore(result);
-      const currentSectionId = test.sectionId || getSectionIdFromQuery() || "";
-      const reportUrl = `report.html?studentId=${result.studentId}&testId=${test.id}&sectionId=${currentSectionId}`;
-
-      const progressUrl = `report.html?studentId=${result.studentId}&sectionId=${currentSectionId}`;
-
-      const reportLink = `${window.location.origin}/${progressUrl}`;
-
-      // IMPORTANT: do NOT encode parts earlier
-      const message = `Hi ${studentName}, your test report: ${reportLink}`;
-
-      const whatsappBase = studentPhone
-        ? `https://wa.me/${studentPhone.replace(/\D/g, "")}`
-        : `https://wa.me/`;
-
-      const whatsappUrl = `${whatsappBase}?text=${encodeURIComponent(message)}`;
+      const links = getStudentResultLinks(result, student, test);
 
       return `
         <div class="student-card">
@@ -963,13 +1141,13 @@ function renderStudentResults(test, results, students, sortOption = "name-asc") 
           </div>
           <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
             <span class="result-badge ${score >= 70 ? "correct" : "wrong"}">${score}%</span>
-            <a href="${reportUrl}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
+            <a href="${links.reportUrl}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
               <i class="bi bi-file-text"></i> View this test Report
             </a>
-            <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
+            <a href="${links.progressUrl}" target="_blank" class="btn btn-sm" style="background:#16a085;color:white;border:none">
               <i class="bi bi-graph-up"></i> Progress(all tests)
             </a>
-            <a href="${whatsappUrl}"
+            <a href="${links.whatsappUrl}"
               target="_blank"
               class="btn btn-sm"
               style="background:#25D366;color:white;border:none">
@@ -977,12 +1155,12 @@ function renderStudentResults(test, results, students, sortOption = "name-asc") 
             </a>
             ${navigator.share ? `<button type="button"
                class="btn btn-sm share-link-btn"
-               data-url="${window.location.origin}/${reportUrl}"
+               data-url="${links.shareUrl}"
                style="background:#6c757d;color:white;border:none">
               <i class="bi bi-share"></i> Share this test
             </button>` : `<button type="button"
                class="btn btn-sm copy-link-btn"
-               data-url="${window.location.origin}/${reportUrl}"
+               data-url="${links.shareUrl}"
                style="background:#6c757d;color:white;border:none">
               <i class="bi bi-link"></i> Copy this test Link
             </button>`}
@@ -993,7 +1171,10 @@ function renderStudentResults(test, results, students, sortOption = "name-asc") 
     .join("");
 
   setContentHtml(cardsHtml);
+  bindStudentResultLinkButtons();
+}
 
+function bindStudentResultLinkButtons() {
   contentEl.querySelectorAll(".copy-link-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const url = btn.dataset.url;
@@ -1038,6 +1219,19 @@ async function initializePage() {
     if (!user) {
       showSignInPrompt();
       return;
+    }
+    if (resultsViewToggleEl && !resultsViewToggleEl.dataset.bound) {
+      resultsViewToggleEl.dataset.bound = "true";
+      resultsViewToggleEl.querySelectorAll("[data-results-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          currentResultsView = button.dataset.resultsView || "table";
+          setResultsViewToggleVisible(!getSubjectIdFromQuery());
+          if (currentTestData && currentResultsData.length > 0 && !getSubjectIdFromQuery()) {
+            renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+          }
+        });
+      });
+      setResultsViewToggleVisible(false);
     }
     // Setup sort change listener
     if (sortSelectEl) {

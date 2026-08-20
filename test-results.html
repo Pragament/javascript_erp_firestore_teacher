@@ -32,11 +32,19 @@
                         <option value="name-asc">Name (A-Z)</option>
                         <option value="name-desc">Name (Z-A)</option>
                         <option value="score-asc">Score (Low-High)</option>
-                        <option value="score-desc">Score (High-Low)</option>
+                        <option value="score-desc" selected>Score (High-Low)</option>
                     </select>
                     <select id="subject-select" class="form-select form-select-sm d-none" style="min-width: 180px;">
                         <option value="">All Subjects</option>
                     </select>
+                    <div id="results-view-toggle" class="btn-group btn-group-sm" role="group" aria-label="Results view">
+                        <button type="button" class="btn btn-outline-secondary active" data-results-view="table" title="Table view">
+                            <i class="bi bi-table"></i> Table
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" data-results-view="cards" title="Card view">
+                            <i class="bi bi-card-list"></i> Cards
+                        </button>
+                    </div>
                     <a href="index.html" class="btn" style="background:#2c3e50;color:white;border:none">
                         <i class="bi bi-arrow-left me-1"></i> Dashboard
                     </a>
