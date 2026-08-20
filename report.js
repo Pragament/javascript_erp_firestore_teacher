@@ -2771,6 +2771,12 @@ function initSingleTestInsights() {
     updateView();
   });
 
+  document.querySelectorAll(".report-collapse").forEach((details) => {
+    details.addEventListener("toggle", () => {
+      if (details.open) window.setTimeout(updateView, 0);
+    });
+  });
+
   updateFilterOptions(getFilters());
   updateView();
 }
@@ -3009,56 +3015,160 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
   const onlineTestUrl = questionPaperId
     ? `https://practice.technikh.com/quiz.html?questionPaperId=${encodeURIComponent(questionPaperId)}&randomQuestions=true&questionFormat=mixed&openBook=false`
     : "";
+  const wrong = currentTestQuestionsData.filter((record) => record.status === "wrong").length;
+  const skipped = currentTestQuestionsData.filter((record) => record.status === "skipped").length;
+  const parentMessage = getParentScoreMessage(scorePercent);
+  const weakAreas = buildParentWeakAreaList(currentTestQuestionsData);
+  const subjectPriorities = buildParentSubjectList(currentTestQuestionsData, DEFAULT_SCORING_RULES);
+  const questionsToRedo = wrong + skipped;
 
   setReportHtml(`
-    <div class="card shadow-sm mb-4">
+    <div class="card shadow-sm mb-3 parent-report-hero parent-report-hero-${parentMessage.className}">
       <div class="card-body">
-        <div class="row">
-          <div class="col-md-6">
-            <h5 class="fw-bold mb-3">Student Information</h5>
-            <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
-            <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId || result.studentId || "N/A")}</p>
-${renderStudentPhone(student.phone)}
-          </div>
-          <div class="col-md-6">
-            <h5 class="fw-bold mb-3">Test Information</h5>
-            <p><strong>Test:</strong> ${escapeHtml(test.testName || "N/A")}</p>
-            <p><strong>Total Questions:</strong> ${total}</p>
-            <p>
-              <strong>Accuracy:</strong>
-              <span class="badge ${scoreBadgeClass} fs-6">
-                ${correct}/${total} correct (${scorePercent}%)
-              </span>
-            </p>
-            <p class="small text-muted mb-2">Score cards below separately show recalculated score and score percentage.</p>
-            <div class="d-flex flex-wrap gap-2">
-              <a class="btn btn-sm" style="background:#16a085;color:white;border:none"
-                 href="${allTestsProgressUrl}" target="_blank" rel="noopener">
-                <i class="bi bi-graph-up"></i> Progress (all tests)
-              </a>
-              ${onlineTestUrl ? `
-                <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
-                   href="${onlineTestUrl}" target="_blank" rel="noopener">
-                  <i class="bi bi-pencil-square"></i> Open Online Test
-                </a>
-              ` : ""}
+        <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+          <div>
+            <div class="text-muted small mb-1">Student Test Report</div>
+            <h4 class="fw-bold mb-1">${escapeHtml(student.name || "Student")}</h4>
+            <div class="parent-report-subtitle">${escapeHtml(test.testName || "Test")}</div>
+            <div class="small text-muted mt-2">
+              ID: ${escapeHtml(student.studentId || studentId || result.studentId || "N/A")}
+              ${student.phone ? ` &middot; Phone: ${escapeHtml(student.phone)}` : ""}
             </div>
-            <p class="hidden mt-2 mb-0">
-              <a class="btn btn-sm" style="background:#2c3e50;color:white;border:none"
-                 href="report.html?testId=${encodeURIComponent(testId)}&studentId=${encodeURIComponent(studentId)}" target="_blank">
-                Open Link
-              </a>
-            </p>
           </div>
+          <div class="parent-report-score">
+            <div class="parent-report-percent">${scorePercent}%</div>
+            <div class="parent-report-scoreline">${correct}/${total} correct</div>
+          </div>
+        </div>
+        <div class="row g-2 mt-3 parent-report-counts">
+          <div class="col-4"><div class="parent-report-count parent-report-count-good"><strong>${correct}</strong><span>Correct</span></div></div>
+          <div class="col-4"><div class="parent-report-count parent-report-count-bad"><strong>${wrong}</strong><span>Wrong</span></div></div>
+          <div class="col-4"><div class="parent-report-count parent-report-count-warn"><strong>${skipped}</strong><span>Skipped</span></div></div>
         </div>
       </div>
     </div>
-    <div class="card shadow-sm mb-4">
+
+    <div class="card shadow-sm mb-3 parent-report-next-step">
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-lg-5">
+            <div class="small text-muted mb-1">Simple Meaning</div>
+            <h5 class="fw-bold mb-2">${escapeHtml(parentMessage.title)}</h5>
+            <p class="mb-0">${escapeHtml(parentMessage.text)}</p>
+          </div>
+          <div class="col-lg-7">
+            <div class="small text-muted mb-2">Revise First</div>
+            ${weakAreas.length ? `
+              <div class="parent-report-chip-list">
+                ${weakAreas.map((area) => `
+                  <span class="parent-report-chip">
+                    ${escapeHtml(area.label)}
+                    <strong>${area.total}</strong>
+                  </span>
+                `).join("")}
+              </div>
+            ` : `<div class="text-success fw-semibold">No wrong or skipped questions found.</div>`}
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mt-3 no-print">
+          <a class="btn btn-sm" style="background:#16a085;color:white;border:none" href="#questionsCardView">
+            <i class="bi bi-arrow-down-circle"></i> See ${questionsToRedo || "all"} questions to revise
+          </a>
+          <a class="btn btn-sm btn-outline-secondary" href="${allTestsProgressUrl}" target="_blank" rel="noopener">
+            <i class="bi bi-graph-up"></i> All test progress
+          </a>
+          ${onlineTestUrl ? `
+            <a class="btn btn-sm btn-outline-secondary" href="${onlineTestUrl}" target="_blank" rel="noopener">
+              <i class="bi bi-pencil-square"></i> Practice again
+            </a>
+          ` : ""}
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-3">
+          <div>
+            <h5 class="fw-bold mb-1">Subject Priority</h5>
+            <p class="text-muted small mb-0">Lowest scoring subjects are shown first.</p>
+          </div>
+          <span class="badge ${scoreBadgeClass} align-self-start">${correct}/${total} correct (${scorePercent}%)</span>
+        </div>
+        ${subjectPriorities.length ? `
+          <div class="parent-report-subject-list">
+            ${subjectPriorities.map(({ values, metrics }) => `
+              <div class="parent-report-subject-row">
+                <div>
+                  <div class="fw-semibold">${escapeHtml(values[0])}</div>
+                  <div class="small text-muted">${metrics.correct} correct, ${metrics.wrong} wrong, ${metrics.skipped} skipped</div>
+                </div>
+                <div class="parent-report-subject-score">${metrics.marks.toFixed(1)}%</div>
+              </div>
+            `).join("")}
+          </div>
+        ` : `<div class="text-muted small">No subject data available.</div>`}
+      </div>
+    </div>
+
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+      <div>
+        <h5 class="fw-bold mb-1">Questions To Revise</h5>
+        <p class="text-muted small mb-0">Wrong and skipped questions are shown first. Turn off the switch to see every question.</p>
+      </div>
+      <div class="d-flex gap-2 no-print">
+        <button id="exportCSVDetail" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-download"></i> Detail Excel
+        </button>
+        <button id="exportCSVSummary" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-download"></i> Summary Excel
+        </button>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3 no-print">
+      <div class="card-body">
+        <div class="row g-3 align-items-start">
+          <div class="col-lg-4">
+            <label class="form-label small text-muted mb-2 d-block">Question View</label>
+            <div class="btn-group" role="group" aria-label="Question view">
+              <button type="button" class="btn btn-dark btn-sm" data-question-view="card">Card</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-question-view="table">Table</button>
+            </div>
+          </div>
+          <div class="col-lg-8">
+            <label class="form-label small text-muted mb-2 d-block">Show Fields</label>
+            <div class="d-flex flex-wrap gap-3">
+              ${getFieldToggleDefinitions().map((field) => `
+                <div class="form-check">
+                  <input class="form-check-input question-field-toggle" type="checkbox" value="${field.key}" id="fieldToggle${field.key}" checked>
+                  <label class="form-check-label small" for="fieldToggle${field.key}">${escapeHtml(field.label)}</label>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+        <div class="form-check form-switch d-flex align-items-center mb-0 mt-3">
+          <input class="form-check-input" type="checkbox" id="wrongOnlyToggle" checked>
+          <label class="form-check-label ms-2" for="wrongOnlyToggle">Show only wrong and skipped</label>
+        </div>
+        <div id="question-filter-status" class="text-muted small mt-2"></div>
+      </div>
+    </div>
+
+    <div id="questionsCardView">${questionsHtml}</div>
+    <div id="questionsTableViewWrap" class="d-none mb-4"></div>
+
+    <details class="report-collapse card shadow-sm mb-4 no-print">
+      <summary class="report-collapse-summary">
+        <span><i class="bi bi-sliders me-2"></i>More Filters, Charts, and Marks</span>
+        <i class="bi bi-chevron-down"></i>
+      </summary>
       <div class="card-body">
         <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 mb-3">
           <div>
-            <h5 class="fw-bold mb-1">Performance Dashboard</h5>
-            <p class="text-muted small mb-0">Use multi-select filters, switch chart type, and recalculate marks with your own scoring rules.</p>
+            <h5 class="fw-bold mb-1">Detailed Dashboard</h5>
+            <p class="text-muted small mb-0">For teachers: filter by subject/chapter/topic, change chart type, and recalculate marks.</p>
           </div>
           <div class="small text-muted">Default scoring: +3 correct, -1 wrong, 0 skipped</div>
         </div>
@@ -3117,12 +3227,7 @@ ${renderStudentPhone(student.phone)}
         </div>
         <div class="d-flex flex-wrap gap-2 align-items-center mb-3 no-print">
           <button id="resetScoringBtn" class="btn btn-sm btn-outline-secondary">Reset Scoring</button>
-          <div class="form-check form-switch d-flex align-items-center mb-0">
-            <input class="form-check-input" type="checkbox" id="wrongOnlyToggle">
-            <label class="form-check-label ms-2" for="wrongOnlyToggle">Show only wrong and skipped</label>
-          </div>
         </div>
-        <div id="question-filter-status" class="text-muted small mb-3"></div>
         <div class="row g-3 mb-4" id="statsCards"></div>
         <div class="card bg-light border-0 mb-4">
           <div class="card-body">
@@ -3145,49 +3250,21 @@ ${renderStudentPhone(student.phone)}
           </div>
         </div>
       </div>
-    </div>
-    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
-      <h5 class="fw-bold mb-0">Detailed Results</h5>
-      <div class="d-flex gap-2 no-print">
-        <button id="exportCSVDetail" class="btn btn-sm" style="background:#16a085;color:white;border:none">
-          <i class="bi bi-download"></i> Export Detail Excel
-        </button>
-        <button id="exportCSVSummary" class="btn btn-sm" style="background:#2c3e50;color:white;border:none">
-          <i class="bi bi-download"></i> Export Summary Excel
-        </button>
-      </div>
-    </div>
-    ${buildAIPromptCardsHtml(test, student)}
-    <div class="card shadow-sm mb-4 no-print">
+    </details>
+
+    <details class="report-collapse card shadow-sm mb-4 no-print">
+      <summary class="report-collapse-summary">
+        <span><i class="bi bi-chat-dots me-2"></i>AI Prompts and Study Help</span>
+        <i class="bi bi-chevron-down"></i>
+      </summary>
       <div class="card-body">
-        <div class="row g-3 align-items-start">
-          <div class="col-lg-4">
-            <label class="form-label small text-muted mb-2 d-block">Question View</label>
-            <div class="btn-group" role="group" aria-label="Question view">
-              <button type="button" class="btn btn-dark btn-sm" data-question-view="card">Card</button>
-              <button type="button" class="btn btn-outline-secondary btn-sm" data-question-view="table">Table</button>
-            </div>
-          </div>
-          <div class="col-lg-8">
-            <label class="form-label small text-muted mb-2 d-block">Show Fields</label>
-            <div class="d-flex flex-wrap gap-3">
-              ${getFieldToggleDefinitions().map((field) => `
-                <div class="form-check">
-                  <input class="form-check-input question-field-toggle" type="checkbox" value="${field.key}" id="fieldToggle${field.key}" checked>
-                  <label class="form-check-label small" for="fieldToggle${field.key}">${escapeHtml(field.label)}</label>
-                </div>
-              `).join("")}
-            </div>
-          </div>
+        <div class="alert alert-warning small mb-3 d-flex align-items-center" role="alert">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>
+          <span><strong>AI-Generated Content:</strong> AI can make mistakes. Always verify important information like question papers and chat responses.</span>
         </div>
+        ${buildAIPromptCardsHtml(test, student)}
       </div>
-    </div>
-    <div class="alert alert-warning small mb-3 d-flex align-items-center" role="alert">
-      <i class="bi bi-exclamation-triangle-fill me-2"></i>
-      <span><strong>AI-Generated Content:</strong> AI can make mistakes. Always verify important information like question papers and chat responses.</span>
-    </div>
-    <div id="questionsCardView">${questionsHtml}</div>
-    <div id="questionsTableViewWrap" class="d-none"></div>
+    </details>
   `);
 
   initSingleTestInsights();
@@ -3282,6 +3359,65 @@ function initSingleTestAIChat() {
     reportAIChatPanel.refreshContextState();
     reportAIChatPanel.clearChat();
   }
+}
+
+function getParentScoreMessage(scorePercent) {
+  if (scorePercent >= 80) {
+    return {
+      title: "Doing well",
+      text: "Keep regular practice going. Check the wrong questions once so small mistakes do not repeat.",
+      className: "success",
+    };
+  }
+  if (scorePercent >= 60) {
+    return {
+      title: "Needs steady practice",
+      text: "The child understands many questions, but should revise the weak chapters and redo wrong questions.",
+      className: "warning",
+    };
+  }
+  return {
+    title: "Needs close support",
+    text: "Start with the basics in the weak areas. Short daily practice will help more than last-minute study.",
+    className: "danger",
+  };
+}
+
+function buildParentWeakAreaList(records, limit = 4) {
+  const groups = new Map();
+
+  records.forEach((record) => {
+    if (record.status === "correct") return;
+    const labelParts = [record.subject, record.chapter, record.topic]
+      .map((part) => String(part || "").trim())
+      .filter((part) => part && part !== "—");
+    const label = labelParts.slice(0, 3).join(" - ") || record.subject || "General";
+
+    if (!groups.has(label)) {
+      groups.set(label, { label, wrong: 0, skipped: 0, total: 0 });
+    }
+    const entry = groups.get(label);
+    entry.total += 1;
+    if (record.status === "skipped") entry.skipped += 1;
+    else entry.wrong += 1;
+  });
+
+  return Array.from(groups.values())
+    .sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      if (b.wrong !== a.wrong) return b.wrong - a.wrong;
+      return a.label.localeCompare(b.label);
+    })
+    .slice(0, limit);
+}
+
+function buildParentSubjectList(records, scoringRules) {
+  return buildGroupedPerformanceRows(records, ["subject"], scoringRules)
+    .sort((a, b) => {
+      if (a.metrics.marks !== b.metrics.marks) return a.metrics.marks - b.metrics.marks;
+      return b.metrics.wrong + b.metrics.skipped - (a.metrics.wrong + a.metrics.skipped);
+    })
+    .slice(0, 4);
 }
 
 function buildStudentProgressSubjectSummary(rows) {
