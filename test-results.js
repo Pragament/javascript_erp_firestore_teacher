@@ -45,7 +45,6 @@ const tableScoreControlsEl = document.getElementById("table-score-controls");
 const scoreCorrectInput = document.getElementById("scoreCorrect");
 const scoreWrongInput = document.getElementById("scoreWrong");
 const scoreSkippedInput = document.getElementById("scoreSkipped");
-const exportCsvBtn = document.getElementById("export-csv-btn");
 
 let currentTestId = null;
 let availableTests = [];
@@ -55,6 +54,7 @@ let currentStudentsData = [];
 let currentQuestionPaperData = null;
 let currentResultsView = "table";
 let subjectResultsSort = { key: "rank", direction: "asc" };
+let studentResultsSort = { key: "rank", direction: "asc" };
 
 const DEFAULT_SCORING_RULES = {
   correct: 3,
@@ -189,7 +189,6 @@ function exportCurrentResultsTable() {
 function showError(message) {
   setResultsViewToggleVisible(false);
   setTableScoreControlsVisible(false);
-  setExportCsvVisible(false);
   subtitleEl.textContent = message;
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
 }
@@ -203,7 +202,6 @@ function showSignInPrompt() {
   const message = "Please sign in from the teacher dashboard first.";
   setResultsViewToggleVisible(false);
   setTableScoreControlsVisible(false);
-  setExportCsvVisible(false);
   subtitleEl.textContent = message;
   setContentHtml(`
     <div class="alert alert-warning d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
@@ -564,11 +562,6 @@ function setResultsViewToggleVisible(visible) {
 function setTableScoreControlsVisible(visible) {
   if (!tableScoreControlsEl) return;
   tableScoreControlsEl.classList.toggle("d-none", !visible);
-}
-
-function setExportCsvVisible(visible) {
-  if (!exportCsvBtn) return;
-  exportCsvBtn.classList.toggle("d-none", !visible);
 }
 
 async function fetchTeacherSections(email) {
@@ -1112,10 +1105,98 @@ function bindSubjectSortButtons() {
   });
 }
 
+function getStudentSortIndicator(key) {
+  if (studentResultsSort.key !== key) return "";
+  return ` <span class="subject-sort-indicator">${studentResultsSort.direction === "asc" ? "^" : "v"}</span>`;
+}
+
+function getStudentSortHeader(key, label) {
+  return `<button type="button" class="table-sort-header" data-student-sort-key="${escapeHtml(key)}">${escapeHtml(label)}${getStudentSortIndicator(key)}</button>`;
+}
+
+function sortStudentResultRows(rows) {
+  const direction = studentResultsSort.direction === "asc" ? 1 : -1;
+  const getValue = (row) => {
+    switch (studentResultsSort.key) {
+      case "index":
+        return row.displayIndex;
+      case "roll":
+        return row.roll;
+      case "name":
+        return row.studentName;
+      case "subject":
+        return row.subjectMarks[studentResultsSort.subject] ?? 0;
+      case "total":
+        return row.metrics.earnedMarks;
+      case "rank":
+        return row.rank;
+      case "percentile":
+        return row.percentile;
+      case "grade":
+        return row.grade;
+      case "gpa":
+        return row.gpa;
+      default:
+        return row.rank;
+    }
+  };
+
+  return [...rows].sort((a, b) => {
+    const valueA = getValue(a);
+    const valueB = getValue(b);
+    if (typeof valueA === "number" && typeof valueB === "number") {
+      if (valueA !== valueB) return (valueA - valueB) * direction;
+    } else {
+      const compare = String(valueA || "").localeCompare(String(valueB || ""), undefined, { numeric: true, sensitivity: "base" });
+      if (compare !== 0) return compare * direction;
+    }
+
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.studentName.localeCompare(b.studentName);
+  });
+}
+
+function bindStudentSortButtons() {
+  contentEl.querySelectorAll(".table-sort-header").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.studentSortKey || "rank";
+      const subject = button.dataset.subject || "";
+      const sameColumn = studentResultsSort.key === key && (
+        key !== "subject" || studentResultsSort.subject === subject
+      );
+      const defaultDirection = key === "index" || key === "roll" || key === "name" || key === "rank" ? "asc" : "desc";
+      studentResultsSort = {
+        key,
+        direction: sameColumn ? (studentResultsSort.direction === "asc" ? "desc" : "asc") : defaultDirection,
+        subject: key === "subject" ? subject : "",
+      };
+
+      if (currentTestData && currentResultsData.length > 0 && !getSubjectIdFromQuery()) {
+        renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+      }
+    });
+  });
+}
+
+function getExportBarHtml(label = "Export CSV") {
+  return `
+    <div class="results-export-bar no-print">
+      <button type="button" class="btn btn-sm results-export-btn">
+        <i class="bi bi-download me-1"></i>${escapeHtml(label)}
+      </button>
+    </div>
+  `;
+}
+
+function bindRenderedExportButton() {
+  contentEl.querySelectorAll(".results-export-btn").forEach((button) => {
+    button.addEventListener("click", exportCurrentResultsTable);
+  });
+}
+
 function renderSubjectResults(test, results, students, questionPaper, subjectId) {
   setResultsViewToggleVisible(false);
   setTableScoreControlsVisible(true);
-  setExportCsvVisible(true);
   const questions = getSubjectQuestions(test, questionPaper, subjectId);
   const studentById = getStudentByIdMap(students);
   const scoringRules = getCurrentScoringRules();
@@ -1148,7 +1229,6 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
   subtitleEl.textContent = `${test.testName || "Test"} | ${subjectId} | ${sortedRows.length} student result${sortedRows.length === 1 ? "" : "s"}`;
 
   if (questions.length === 0) {
-    setExportCsvVisible(false);
     setContentHtml(`
       <div class="alert alert-warning">
         No questions found for subject "${escapeHtml(subjectId)}" in this test.
@@ -1158,7 +1238,6 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
   }
 
   if (sortedRows.length === 0) {
-    setExportCsvVisible(false);
     setContentHtml('<div class="alert alert-warning">No student results found for this test yet.</div>');
     return;
   }
@@ -1202,6 +1281,7 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
 
   setContentHtml(`
     ${buildSubjectTeacherPromptCardsHtml(test, subjectId, questions, sortedRows.map((row) => row.result), studentById)}
+    ${getExportBarHtml("Export Subject CSV")}
     <div class="subject-results-wrap">
       <div class="subject-results-scroll">
         <table class="subject-results-table">
@@ -1224,6 +1304,7 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
   `);
 
   initPromptCopyButtons(contentEl);
+  bindRenderedExportButton();
   bindSubjectSortButtons();
 
   contentEl.querySelectorAll(".subject-question-info").forEach((button) => {
@@ -1241,7 +1322,6 @@ function renderStudentResults(test, results, students, sortOption = "score-desc"
   setResultsViewToggleVisible(true);
 
   if (results.length === 0) {
-    setExportCsvVisible(false);
     setContentHtml('<div class="alert alert-warning">No student results found for this test yet.</div>');
     return;
   }
@@ -1293,58 +1373,87 @@ function renderStudentResults(test, results, students, sortOption = "score-desc"
 
 function renderStudentTable(test, sortedResults, studentById, rankByResultId, scoringRules) {
   setTableScoreControlsVisible(true);
-  setExportCsvVisible(true);
   const subjects = getSubjectColumns(test, currentQuestionPaperData, sortedResults);
   const totalStudents = sortedResults.length;
-  const subjectHeadersHtml = subjects.map((subject) => `<th>${escapeHtml(subject)}</th>`).join("");
+  const subjectHeadersHtml = subjects.map((subject) => `
+    <th>
+      <button type="button" class="table-sort-header" data-student-sort-key="subject" data-subject="${escapeHtml(subject)}">
+        ${escapeHtml(subject)}${studentResultsSort.key === "subject" && studentResultsSort.subject === subject ? getStudentSortIndicator("subject") : ""}
+      </button>
+    </th>
+  `).join("");
 
-  const rowsHtml = sortedResults
-    .map((result, index) => {
-      const student = getResultStudent(result, studentById);
-      const studentName = student?.name || result.name || "Unknown";
-      const scoreDetails = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
-      const rank = rankByResultId.get(result.id || result.studentId) || index + 1;
-      const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
-      const links = getStudentResultLinks(result, student, test);
+  const tableRows = sortedResults.map((result, index) => {
+    const student = getResultStudent(result, studentById);
+    const studentName = student?.name || result.name || "Unknown";
+    const scoreDetails = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
+    const rank = rankByResultId.get(result.id || result.studentId) || index + 1;
+    const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
+    const links = getStudentResultLinks(result, student, test);
+    const subjectMarks = subjects.reduce((map, subject) => {
+      const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules);
+      map[subject] = subjectMetrics.earnedMarks;
+      return map;
+    }, {});
+    const gpa = Number(getResultGpa(scoreDetails.marks));
+
+    return {
+      result,
+      student,
+      studentName,
+      roll: getRollNumber(student, result),
+      metrics: scoreDetails,
+      rank,
+      percentile,
+      links,
+      subjectMarks,
+      grade: getResultGrade(scoreDetails.marks),
+      gpa,
+      displayIndex: index + 1,
+    };
+  });
+
+  const rowsHtml = sortStudentResultRows(tableRows)
+    .map((row) => {
       const subjectCellsHtml = subjects
         .map((subject) => {
-          const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules);
+          const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(row.result, subject), scoringRules);
           const title = `${subjectMetrics.correct} correct, ${subjectMetrics.wrong} wrong, ${subjectMetrics.skipped} skipped`;
-          return `<td title="${escapeHtml(title)}">${formatMarksValue(subjectMetrics.earnedMarks)}</td>`;
+          return `<td title="${escapeHtml(title)}">${formatMarksValue(row.subjectMarks[subject])}</td>`;
         })
         .join("");
 
       return `
         <tr>
-          <td>${index + 1}</td>
-          <td>${escapeHtml(getRollNumber(student, result))}</td>
+          <td>${row.displayIndex}</td>
+          <td>${escapeHtml(row.roll)}</td>
           <td class="student-results-name-cell">
-            <a href="${links.reportUrl}" target="_blank">${escapeHtml(studentName)}</a>
+            <a href="${row.links.reportUrl}" target="_blank">${escapeHtml(row.studentName)}</a>
           </td>
           ${subjectCellsHtml}
-          <td title="${scoreDetails.correct} correct, ${scoreDetails.wrong} wrong, ${scoreDetails.skipped} skipped">${formatMarksValue(scoreDetails.earnedMarks)}</td>
-          <td>${rank}</td>
-          <td>${percentile.toFixed(2)}</td>
-          <td>${escapeHtml(getResultGrade(scoreDetails.marks))}</td>
-          <td>${escapeHtml(getResultGpa(scoreDetails.marks))}</td>
+          <td title="${row.metrics.correct} correct, ${row.metrics.wrong} wrong, ${row.metrics.skipped} skipped">${formatMarksValue(row.metrics.earnedMarks)}</td>
+          <td>${row.rank}</td>
+          <td>${row.percentile.toFixed(2)}</td>
+          <td>${escapeHtml(row.grade)}</td>
+          <td>${row.gpa.toFixed(2)}</td>
           <td class="student-results-actions-cell no-print">
-            <a href="${links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
+            <a href="${row.links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
               <i class="bi bi-file-text"></i>
             </a>
-            <a href="${links.progressUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="Progress across all tests">
+            <a href="${row.links.progressUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="Progress across all tests">
               <i class="bi bi-graph-up"></i>
             </a>
-            <a href="${links.whatsappUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="WhatsApp all tests">
+            <a href="${row.links.whatsappUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="WhatsApp all tests">
               <i class="bi bi-whatsapp"></i>
             </a>
             ${navigator.share ? `<button type="button"
                class="btn btn-sm btn-outline-secondary share-link-btn"
-               data-url="${links.shareUrl}"
+               data-url="${row.links.shareUrl}"
                title="Share this test">
               <i class="bi bi-share"></i>
             </button>` : `<button type="button"
                class="btn btn-sm btn-outline-secondary copy-link-btn"
-               data-url="${links.shareUrl}"
+               data-url="${row.links.shareUrl}"
                title="Copy this test link">
               <i class="bi bi-link"></i>
             </button>`}
@@ -1355,20 +1464,21 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
     .join("");
 
   setContentHtml(`
+    ${getExportBarHtml("Export Student CSV")}
     <div class="student-results-table-wrap">
       <div class="student-results-table-scroll">
         <table class="student-results-table">
           <thead>
             <tr>
-              <th>#</th>
-              <th>Roll</th>
-              <th>Name</th>
+              <th>${getStudentSortHeader("index", "#")}</th>
+              <th>${getStudentSortHeader("roll", "Roll")}</th>
+              <th>${getStudentSortHeader("name", "Name")}</th>
               ${subjectHeadersHtml}
-              <th>Total</th>
-              <th>Rank</th>
-              <th>Percentile</th>
-              <th>Grade</th>
-              <th>GPA</th>
+              <th>${getStudentSortHeader("total", "Total")}</th>
+              <th>${getStudentSortHeader("rank", "Rank")}</th>
+              <th>${getStudentSortHeader("percentile", "Percentile")}</th>
+              <th>${getStudentSortHeader("grade", "Grade")}</th>
+              <th>${getStudentSortHeader("gpa", "GPA")}</th>
               <th class="no-print">Links</th>
             </tr>
           </thead>
@@ -1378,12 +1488,13 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
     </div>
   `);
 
+  bindRenderedExportButton();
+  bindStudentSortButtons();
   bindStudentResultLinkButtons();
 }
 
 function renderStudentCards(test, sortedResults, studentById) {
   setTableScoreControlsVisible(false);
-  setExportCsvVisible(false);
   const cardsHtml = sortedResults
     .map((result) => {
       const student = getResultStudent(result, studentById);
@@ -1490,11 +1601,6 @@ async function initializePage() {
         });
       });
       setResultsViewToggleVisible(false);
-    }
-    if (exportCsvBtn && !exportCsvBtn.dataset.bound) {
-      exportCsvBtn.dataset.bound = "true";
-      exportCsvBtn.addEventListener("click", exportCurrentResultsTable);
-      setExportCsvVisible(false);
     }
     [scoreCorrectInput, scoreWrongInput, scoreSkippedInput].forEach((input) => {
       if (!input || input.dataset.bound) return;
