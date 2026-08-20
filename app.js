@@ -136,7 +136,9 @@ function redirectToPreviousPageAfterLogin() {
     const redirectPath = getSafeRedirectPath();
     if (redirectPath) {
         window.location.assign(redirectPath);
+        return true;
     }
+    return false;
 }
 
 // PSED indicators for event tagging
@@ -167,11 +169,12 @@ const psedIndicators = [
 auth.onAuthStateChanged(async (user) => {
     if (user) {
         currentUser = user;
+        if (redirectToPreviousPageAfterLogin()) return;
+
         elements.authScreen.classList.add('d-none');
         elements.mainApp.classList.remove('d-none');
         elements.userEmail.textContent = user.email;
         await initializeApp();
-        redirectToPreviousPageAfterLogin();
     } else {
         currentUser = null;
         elements.mainApp.classList.add('d-none');
