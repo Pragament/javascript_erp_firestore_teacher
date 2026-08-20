@@ -53,6 +53,7 @@ let currentResultsData = [];
 let currentStudentsData = [];
 let currentQuestionPaperData = null;
 let currentResultsView = "table";
+let subjectResultsSort = { key: "rank", direction: "asc" };
 
 const DEFAULT_SCORING_RULES = {
   correct: 3,
@@ -449,9 +450,24 @@ function calculatePerformanceMetrics(records, scoringRules) {
   };
 }
 
+function getSubjectQuestionRecordsForResult(result, questions) {
+  return questions.map((question) => {
+    const rawStatus = findResultStatus(result, question);
+    const status = isRightStatus(rawStatus) ? "correct" : isSkippedStatus(rawStatus) ? "skipped" : "wrong";
+    return { subject: question.subject, status, rawStatus };
+  });
+}
+
 function formatMarksValue(value) {
   const rounded = Math.round((Number(value) || 0) * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
+
+function getSubjectStatusSortValue(status) {
+  if (isRightStatus(status)) return 3;
+  if (isSkippedStatus(status)) return 2;
+  if (status) return 1;
+  return 0;
 }
 
 function getStudentByIdMap(students) {
@@ -983,20 +999,109 @@ function initPromptCopyButtons(root = document) {
   });
 }
 
+function getSubjectSortIndicator(key, questionIndex = null) {
+  const isActive = subjectResultsSort.key === key && (
+    key !== "question" || Number(subjectResultsSort.questionIndex) === Number(questionIndex)
+  );
+  if (!isActive) return "";
+  return ` <span class="subject-sort-indicator">${subjectResultsSort.direction === "asc" ? "^" : "v"}</span>`;
+}
+
+function sortSubjectResultRows(rows) {
+  const direction = subjectResultsSort.direction === "asc" ? 1 : -1;
+  const getValue = (row) => {
+    switch (subjectResultsSort.key) {
+      case "name":
+        return row.studentName;
+      case "roll":
+        return row.roll;
+      case "question":
+        return getSubjectStatusSortValue(row.records[Number(subjectResultsSort.questionIndex)]?.rawStatus || "");
+      case "correct":
+        return row.metrics.correct;
+      case "wrong":
+        return row.metrics.wrong;
+      case "skipped":
+        return row.metrics.skipped;
+      case "marks":
+        return row.metrics.earnedMarks;
+      case "rank":
+        return row.rank;
+      default:
+        return row.rank;
+    }
+  };
+
+  return [...rows].sort((a, b) => {
+    const valueA = getValue(a);
+    const valueB = getValue(b);
+    if (typeof valueA === "number" && typeof valueB === "number") {
+      if (valueA !== valueB) return (valueA - valueB) * direction;
+    } else {
+      const compare = String(valueA || "").localeCompare(String(valueB || ""), undefined, { numeric: true, sensitivity: "base" });
+      if (compare !== 0) return compare * direction;
+    }
+
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.studentName.localeCompare(b.studentName);
+  });
+}
+
+function bindSubjectSortButtons() {
+  contentEl.querySelectorAll(".subject-sort-header").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.subjectSortKey || "rank";
+      const questionIndex = button.dataset.questionIndex;
+      const sameColumn = subjectResultsSort.key === key && (
+        key !== "question" || Number(subjectResultsSort.questionIndex) === Number(questionIndex)
+      );
+      const defaultDirection = key === "name" || key === "roll" || key === "rank" ? "asc" : "desc";
+      subjectResultsSort = {
+        key,
+        direction: sameColumn ? (subjectResultsSort.direction === "asc" ? "desc" : "asc") : defaultDirection,
+        questionIndex: key === "question" ? Number(questionIndex) : null,
+      };
+
+      if (currentTestData && currentResultsData.length > 0 && getSubjectIdFromQuery()) {
+        renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, getSubjectIdFromQuery());
+      }
+    });
+  });
+}
+
 function renderSubjectResults(test, results, students, questionPaper, subjectId) {
   setResultsViewToggleVisible(false);
-  setTableScoreControlsVisible(false);
+  setTableScoreControlsVisible(true);
   const questions = getSubjectQuestions(test, questionPaper, subjectId);
-  const studentById = new Map(students.map((student) => [student.studentId || student.id, student]));
-  const sortedResults = [...results].sort((a, b) => {
-    const studentA = studentById.get(a.studentId);
-    const studentB = studentById.get(b.studentId);
-    const nameA = studentA?.name || a.name || a.studentId || "";
-    const nameB = studentB?.name || b.name || b.studentId || "";
-    return nameA.localeCompare(nameB);
+  const studentById = getStudentByIdMap(students);
+  const scoringRules = getCurrentScoringRules();
+  const rankRows = [...results]
+    .map((result) => ({
+      result,
+      metrics: calculatePerformanceMetrics(getSubjectQuestionRecordsForResult(result, questions), scoringRules),
+    }))
+    .sort((a, b) => {
+      if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
+      return b.metrics.marks - a.metrics.marks;
+    });
+  const rankByResultId = new Map(rankRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
+  const subjectRows = results.map((result) => {
+    const student = getResultStudent(result, studentById);
+    const records = getSubjectQuestionRecordsForResult(result, questions);
+    const metrics = calculatePerformanceMetrics(records, scoringRules);
+    return {
+      result,
+      student,
+      studentName: student?.name || result.name || "Unknown",
+      roll: getRollNumber(student, result),
+      records,
+      metrics,
+      rank: rankByResultId.get(result.id || result.studentId) || 0,
+    };
   });
+  const sortedRows = sortSubjectResultRows(subjectRows);
 
-  subtitleEl.textContent = `${test.testName || "Test"} | ${subjectId} | ${sortedResults.length} student result${sortedResults.length === 1 ? "" : "s"}`;
+  subtitleEl.textContent = `${test.testName || "Test"} | ${subjectId} | ${sortedRows.length} student result${sortedRows.length === 1 ? "" : "s"}`;
 
   if (questions.length === 0) {
     setContentHtml(`
@@ -1007,7 +1112,7 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
     return;
   }
 
-  if (sortedResults.length === 0) {
+  if (sortedRows.length === 0) {
     setContentHtml('<div class="alert alert-warning">No student results found for this test yet.</div>');
     return;
   }
@@ -1015,58 +1120,55 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
   const headerHtml = questions
     .map((question, index) => `
       <th>
-        <button type="button" class="subject-question-header" data-question-index="${index}" title="View question details">
-          Q${escapeHtml(question.questionNumber)}
+        <button type="button" class="subject-sort-header" data-subject-sort-key="question" data-question-index="${index}" title="Sort by question ${escapeHtml(question.questionNumber)}">
+          Q${escapeHtml(question.questionNumber)}${getSubjectSortIndicator("question", index)}
+        </button>
+        <button type="button" class="subject-question-info" data-question-index="${index}" title="View question details">
+          <i class="bi bi-info-circle"></i>
         </button>
       </th>
     `)
     .join("");
 
-  const rowsHtml = sortedResults
-    .map((result) => {
-      const student = studentById.get(result.studentId);
-      const studentName = student?.name || result.name || "Unknown";
-      let rightCount = 0;
-      let wrongCount = 0;
-      let skippedCount = 0;
-
+  const rowsHtml = sortedRows
+    .map((row) => {
       const cellsHtml = questions
-        .map((question) => {
-          const status = findResultStatus(result, question);
-          if (isRightStatus(status)) rightCount += 1;
-          else if (isSkippedStatus(status)) skippedCount += 1;
-          else wrongCount += 1;
-
+        .map((question, questionIndex) => {
+          const status = row.records[questionIndex]?.rawStatus || "-";
           return `<td class="subject-status-cell ${getStatusClass(status)}">${escapeHtml(status)}</td>`;
         })
         .join("");
 
       return `
         <tr>
-          <td>${escapeHtml(studentName)}</td>
-          <td>${escapeHtml(getRollNumber(student, result))}</td>
+          <td>${escapeHtml(row.studentName)}</td>
+          <td>${escapeHtml(row.roll)}</td>
           ${cellsHtml}
-          <td class="subject-total-cell">${rightCount}</td>
-          <td class="subject-total-cell">${wrongCount}</td>
-          <td class="subject-total-cell">${skippedCount}</td>
+          <td class="subject-total-cell">${row.metrics.correct}</td>
+          <td class="subject-total-cell">${row.metrics.wrong}</td>
+          <td class="subject-total-cell">${row.metrics.skipped}</td>
+          <td class="subject-total-cell" title="${row.metrics.correct} correct, ${row.metrics.wrong} wrong, ${row.metrics.skipped} skipped">${formatMarksValue(row.metrics.earnedMarks)}</td>
+          <td class="subject-total-cell">${row.rank}</td>
         </tr>
       `;
     })
     .join("");
 
   setContentHtml(`
-    ${buildSubjectTeacherPromptCardsHtml(test, subjectId, questions, sortedResults, studentById)}
+    ${buildSubjectTeacherPromptCardsHtml(test, subjectId, questions, sortedRows.map((row) => row.result), studentById)}
     <div class="subject-results-wrap">
       <div class="subject-results-scroll">
         <table class="subject-results-table">
           <thead>
             <tr>
-              <th>Student</th>
-              <th>Roll</th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="name">Student${getSubjectSortIndicator("name")}</button></th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="roll">Roll${getSubjectSortIndicator("roll")}</button></th>
               ${headerHtml}
-              <th>Total R</th>
-              <th>Total W</th>
-              <th>Total S</th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="correct">Total R${getSubjectSortIndicator("correct")}</button></th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="wrong">Total W${getSubjectSortIndicator("wrong")}</button></th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="skipped">Total S${getSubjectSortIndicator("skipped")}</button></th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="marks">Marks${getSubjectSortIndicator("marks")}</button></th>
+              <th><button type="button" class="subject-sort-header" data-subject-sort-key="rank">Rank${getSubjectSortIndicator("rank")}</button></th>
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
@@ -1076,13 +1178,13 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
   `);
 
   initPromptCopyButtons(contentEl);
+  bindSubjectSortButtons();
 
-  contentEl.querySelectorAll(".subject-question-header").forEach((button) => {
+  contentEl.querySelectorAll(".subject-question-info").forEach((button) => {
     const showDetails = () => {
       const question = questions[Number(button.dataset.questionIndex)];
       if (question) renderQuestionDetailModal(question);
     };
-    button.addEventListener("mouseenter", showDetails);
     button.addEventListener("focus", showDetails);
     button.addEventListener("click", showDetails);
   });
@@ -1344,7 +1446,10 @@ async function initializePage() {
       if (!input || input.dataset.bound) return;
       input.dataset.bound = "true";
       input.addEventListener("input", () => {
-        if (currentTestData && currentResultsData.length > 0 && currentResultsView === "table" && !getSubjectIdFromQuery()) {
+        const subjectId = getSubjectIdFromQuery();
+        if (currentTestData && currentResultsData.length > 0 && subjectId) {
+          renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
+        } else if (currentTestData && currentResultsData.length > 0 && currentResultsView === "table") {
           renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
         }
       });
