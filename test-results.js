@@ -530,7 +530,7 @@ function getResultGpa(percent) {
   return getGradeDetails(percent).gradePoint.toFixed(2);
 }
 
-function getStudentResultLinks(result, student, test) {
+function getStudentResultLinks(result, student, test, whatsappText = "") {
   const studentId = result.studentId || result.id || "";
   const studentName = student?.name || result.name || "Unknown";
   const studentPhone = student?.phone || "";
@@ -538,7 +538,7 @@ function getStudentResultLinks(result, student, test) {
   const reportUrl = `report.html?studentId=${encodeURIComponent(studentId)}&testId=${encodeURIComponent(test.id)}&sectionId=${encodeURIComponent(currentSectionId)}`;
   const progressUrl = `report.html?studentId=${encodeURIComponent(studentId)}&sectionId=${encodeURIComponent(currentSectionId)}`;
   const reportLink = `${window.location.origin}/${progressUrl}`;
-  const message = `Hi ${studentName}, your test report: ${reportLink}`;
+  const message = whatsappText || `Hi ${studentName}, your test report: ${reportLink}`;
   const whatsappBase = studentPhone
     ? `https://wa.me/${studentPhone.replace(/\D/g, "")}`
     : "https://wa.me/";
@@ -1417,7 +1417,6 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
     const scoreDetails = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
     const rank = rankByResultId.get(result.id || result.studentId) || index + 1;
     const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
-    const links = getStudentResultLinks(result, student, test);
     const subjectMarks = subjects.reduce((map, subject) => {
       const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules);
       map[subject] = subjectMetrics.earnedMarks;
@@ -1438,7 +1437,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
       metrics: scoreDetails,
       rank,
       percentile,
-      links,
+      links: null,
       subjectMarks,
       subjectMaxMarks,
       grade: getResultGrade(scoreDetails.marks),
@@ -1449,6 +1448,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
 
   const rowsHtml = sortStudentResultRows(tableRows)
     .map((row) => {
+      const baseLinks = getStudentResultLinks(row.result, row.student, test);
       const shareText = buildStudentShareText({
         studentName: row.studentName,
         testName: currentTestData?.testName || test.testName || "Test",
@@ -1458,8 +1458,9 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
         totalMarks: row.metrics.earnedMarks,
         totalMaxMarks: row.metrics.maxMarks,
         rank: row.rank,
-        reportUrl: row.links.shareUrl,
+        reportUrl: baseLinks.shareUrl,
       });
+      const links = getStudentResultLinks(row.result, row.student, test, shareText);
       const subjectCellsHtml = subjects
         .map((subject) => {
           const subjectMetrics = calculatePerformanceMetrics(getQuestionRecordsForResult(row.result, subject), scoringRules);
@@ -1473,7 +1474,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
           <td>${row.displayIndex}</td>
           <td>${escapeHtml(row.roll)}</td>
           <td class="student-results-name-cell">
-            <a href="${row.links.reportUrl}" target="_blank">${escapeHtml(row.studentName)}</a>
+            <a href="${links.reportUrl}" target="_blank">${escapeHtml(row.studentName)}</a>
           </td>
           ${subjectCellsHtml}
           <td title="${row.metrics.correct} correct, ${row.metrics.wrong} wrong, ${row.metrics.skipped} skipped">${formatMarksValue(row.metrics.earnedMarks)}</td>
@@ -1482,25 +1483,25 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
           <td>${escapeHtml(row.grade)}</td>
           <td>${row.gpa.toFixed(2)}</td>
           <td class="student-results-actions-cell no-print">
-            <a href="${row.links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
+            <a href="${links.reportUrl}" target="_blank" class="btn btn-sm btn-outline-dark" title="View this test report">
               <i class="bi bi-file-text"></i>
             </a>
-            <a href="${row.links.progressUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="Progress across all tests">
+            <a href="${links.progressUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="Progress across all tests">
               <i class="bi bi-graph-up"></i>
             </a>
-            <a href="${row.links.whatsappUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="WhatsApp all tests">
+            <a href="${links.whatsappUrl}" target="_blank" class="btn btn-sm btn-outline-success" title="WhatsApp test result">
               <i class="bi bi-whatsapp"></i>
             </a>
             ${navigator.share ? `<button type="button"
                class="btn btn-sm btn-outline-secondary share-link-btn"
-               data-url="${row.links.shareUrl}"
+               data-url="${links.shareUrl}"
                data-title="Test Report"
                data-text="${escapeHtml(shareText)}"
                title="Share this test">
               <i class="bi bi-share"></i>
             </button>` : `<button type="button"
                class="btn btn-sm btn-outline-secondary copy-link-btn"
-               data-url="${row.links.shareUrl}"
+               data-url="${links.shareUrl}"
                data-text="${escapeHtml(shareText)}"
                title="Copy this test link">
               <i class="bi bi-link"></i>
@@ -1560,7 +1561,7 @@ function renderStudentCards(test, sortedResults, studentById) {
       const student = getResultStudent(result, studentById);
       const studentName = student?.name || result.name || "Unknown";
       const score = calculateScore(result);
-      const links = getStudentResultLinks(result, student, test);
+      const baseLinks = getStudentResultLinks(result, student, test);
       const metrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
       const subjectMarks = subjects.reduce((map, subject) => {
         map[subject] = calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules).earnedMarks;
@@ -1579,8 +1580,9 @@ function renderStudentCards(test, sortedResults, studentById) {
         totalMarks: metrics.earnedMarks,
         totalMaxMarks: metrics.maxMarks,
         rank: rankByResultId.get(result.id || result.studentId) || 0,
-        reportUrl: links.shareUrl,
+        reportUrl: baseLinks.shareUrl,
       });
+      const links = getStudentResultLinks(result, student, test, shareText);
 
       return `
         <div class="student-card">
