@@ -113,6 +113,16 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function normalizePhone(value) {
+  const phone = String(value ?? "").trim();
+  return phone || "";
+}
+
+function renderStudentPhone(phone) {
+  const normalizedPhone = normalizePhone(phone);
+  return normalizedPhone ? `<p><strong>Phone:</strong> ${escapeHtml(normalizedPhone)}</p>` : "";
+}
+
 function sanitizeRichHtml(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -247,18 +257,20 @@ function formatDate(dateObj, fallback) {
 }
 
 async function getStudentByStudentId(studentId) {
-  const studentSnap = await firestore.collection("students").doc(studentId).get();
-  /*const studentSnap = await firestore
+  const directSnap = await firestore.collection("students").doc(studentId).get();
+  if (directSnap.exists) {
+    return { id: directSnap.id, ...directSnap.data() };
+  }
+
+  const querySnap = await firestore
     .collection("students")
     .where("studentId", "==", studentId)
     .limit(1)
-    .get();*/
-  console.log("Queried student by studentId:", { studentId, studentSnap });
-  if (!studentSnap.exists) return null;
-  return { id: studentSnap.id, ...studentSnap.data() };
-  /*if (studentSnap.empty) return null;
-  const doc = studentSnap.docs[0];
-  return { id: doc.id, ...doc.data() };*/
+    .get();
+  console.log("Queried student by studentId:", { studentId, directSnap, querySnap });
+  if (querySnap.empty) return null;
+  const doc = querySnap.docs[0];
+  return { id: doc.id, ...doc.data() };
 }
 
 async function fetchTestsByIds(testIds) {
@@ -460,7 +472,7 @@ function buildFilterOptions(questions, fieldName) {
 
 async function loadSingleTestReport(testId, studentId) {
   showLoading("Loading report...");
-  const [testSnap, resultSnap, studentSnap] = await Promise.all([
+  const [testSnap, resultSnap, student] = await Promise.all([
     firestore.collection("tests").doc(testId).get(),
     firestore.collection("results").doc(`${testId}_${studentId}`).get(),
     /*firestore
@@ -469,7 +481,7 @@ async function loadSingleTestReport(testId, studentId) {
       .where("studentId", "==", studentId)
       .limit(1)
       .get(),*/
-    firestore.collection("students").doc(studentId).get(),
+    getStudentByStudentId(studentId),
   ]);
 
   //if (!testSnap.exists || resultSnap.empty || studentSnap.empty) {
@@ -482,15 +494,18 @@ async function loadSingleTestReport(testId, studentId) {
   const test = testSnap.data();
   //const result = resultSnap.docs[0].data();
   const result = resultSnap.data();
-  console.log("Fetched test, result, student:", { test, result, studentSnap });
-  //const studentDoc = studentSnap.docs[0];
-  const studentDoc = studentSnap; // since we switched to direct doc fetch, studentSnap is a single document snapshot, not a query snapshot
-  const student = { id: studentDoc.id, ...studentDoc.data() };
+  console.log("Fetched test, result, student:", { test, result, student });
+  const studentData = student || {
+    id: studentId,
+    name: result.name || "Unknown",
+    studentId: result.studentId || studentId,
+    phone: result.phone || "",
+  };
   const questionPaper = test.questionPaperID
     ? await fetchQuestionPaper(test.questionPaperID)
     : null;
   console.log("Fetched question paper:", questionPaper);
-  renderSingleTestReport(test, result, student, studentId, testId, questionPaper);
+  renderSingleTestReport(test, result, studentData, studentId, testId, questionPaper);
 }
 
 async function loadStudentProgressReport(studentId) {
@@ -547,7 +562,7 @@ async function loadStudentProgressReport(studentId) {
           <h5 class="fw-bold mb-3">Student Information</h5>
           <p><strong>Name:</strong> ${escapeHtml(studentData.name || "N/A")}</p>
           <p><strong>Student ID:</strong> ${escapeHtml(studentData.studentId || canonicalStudentId)}</p>
-${studentData.phone ? `<p><strong>Phone:</strong> ${escapeHtml(studentData.phone)}</p>` : ''}
+${renderStudentPhone(studentData.phone)}
         </div>
       </div>
       <div class="alert alert-warning">No test results found for this student.</div>
@@ -3003,7 +3018,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
             <h5 class="fw-bold mb-3">Student Information</h5>
             <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
             <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId || result.studentId || "N/A")}</p>
-${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` : ''}
+${renderStudentPhone(student.phone)}
           </div>
           <div class="col-md-6">
             <h5 class="fw-bold mb-3">Test Information</h5>
@@ -4011,7 +4026,7 @@ function renderStudentProgress(student, studentId, rows) {
             <h5 class="fw-bold mb-3">Student Information</h5>
             <p><strong>Name:</strong> ${escapeHtml(student.name || "N/A")}</p>
             <p><strong>Student ID:</strong> ${escapeHtml(student.studentId || studentId)}</p>
-${student.phone ? `<p><strong>Phone:</strong> ${escapeHtml(student.phone)}</p>` : ''}
+${renderStudentPhone(student.phone)}
           </div>
           <div class="col-md-6">
             <h5 class="fw-bold mb-3">Progress Summary</h5>
