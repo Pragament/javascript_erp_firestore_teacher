@@ -257,6 +257,10 @@ function normalizeText(value, fallback = "") {
   return text || fallback;
 }
 
+function normalizePhone(value) {
+  return normalizeText(value);
+}
+
 function normalizeComparable(value) {
   return normalizeText(value).toLowerCase();
 }
@@ -533,7 +537,7 @@ function getResultGpa(percent) {
 function getStudentResultLinks(result, student, test, whatsappText = "") {
   const studentId = result.studentId || result.id || "";
   const studentName = student?.name || result.name || "Unknown";
-  const studentPhone = student?.phone || "";
+  const studentPhone = normalizePhone(student?.phone);
   const currentSectionId = test.sectionId || getSectionIdFromQuery() || "";
   const reportUrl = `report.html?studentId=${encodeURIComponent(studentId)}&testId=${encodeURIComponent(test.id)}&sectionId=${encodeURIComponent(currentSectionId)}`;
   const progressUrl = `report.html?studentId=${encodeURIComponent(studentId)}&sectionId=${encodeURIComponent(currentSectionId)}`;
@@ -1434,6 +1438,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
       student,
       studentName,
       roll: getRollNumber(student, result),
+      phone: normalizePhone(student?.phone),
       metrics: scoreDetails,
       rank,
       percentile,
@@ -1476,6 +1481,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
           <td class="student-results-name-cell">
             <a href="${links.reportUrl}" target="_blank">${escapeHtml(row.studentName)}</a>
           </td>
+          <td>${escapeHtml(row.phone)}</td>
           ${subjectCellsHtml}
           <td title="${row.metrics.correct} correct, ${row.metrics.wrong} wrong, ${row.metrics.skipped} skipped">${formatMarksValue(row.metrics.earnedMarks)}</td>
           <td>${row.rank}</td>
@@ -1522,6 +1528,7 @@ function renderStudentTable(test, sortedResults, studentById, rankByResultId, sc
               <th>${getStudentSortHeader("index", "#")}</th>
               <th>${getStudentSortHeader("roll", "Roll")}</th>
               <th>${getStudentSortHeader("name", "Name")}</th>
+              <th>Phone Number</th>
               ${subjectHeadersHtml}
               <th>${getStudentSortHeader("total", "Total")}</th>
               <th>${getStudentSortHeader("rank", "Rank")}</th>
