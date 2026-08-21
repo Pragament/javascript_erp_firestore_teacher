@@ -49,6 +49,7 @@ const elements = {
     sectionSwitcher: document.getElementById('section-switcher'),
     sectionSelect: document.getElementById('section-select'),
     testsContainer: document.getElementById('tests-container'),
+    createTestBtn: document.getElementById('create-test-btn'),
     refreshTests: document.getElementById('refresh-tests'),
     viewStudentsBtn: document.getElementById('view-students-btn'),
     studentsTableBody: document.getElementById('studentsTableBody'),
@@ -99,12 +100,14 @@ const elements = {
     saveEventBtn: document.getElementById('save-event-btn'),
     deleteEventBtn: document.getElementById('delete-event-btn'),
     testEditModal: document.getElementById('testEditModal'),
+    testEditModalTitle: document.getElementById('test-edit-modal-title'),
     editTestId: document.getElementById('edit-test-id'),
     editTestName: document.getElementById('edit-test-name'),
     editTestDate: document.getElementById('edit-test-date'),
     editTestSection: document.getElementById('edit-test-section'),
     editTestQuestionPaper: document.getElementById('edit-test-question-paper'),
     editTestMessage: document.getElementById('edit-test-message'),
+    saveTestEditLabel: document.getElementById('save-test-edit-label'),
     saveTestEditBtn: document.getElementById('save-test-edit-btn'),
     bubbleImportPreviewModal: document.getElementById('bubbleImportPreviewModal'),
     bubbleImportSummary: document.getElementById('bubble-import-summary'),
@@ -408,10 +411,10 @@ function getChangedTestFields(before, after) {
     return Object.keys(after).filter((key) => String(before[key] || '') !== String(after[key] || ''));
 }
 
-function addTestEditAuditLog(batch, user, testId, before, after, changedFields) {
+function addTestEditAuditLog(batch, user, testId, before, after, changedFields, actionType = 'test_edit') {
     const auditRef = firestore.collection('resultEditAuditLogs').doc();
     batch.set(auditRef, {
-        actionType: 'test_edit',
+        actionType,
         scope: 'test',
         teacherUid: user.uid || '',
         teacherEmail: user.email || '',
@@ -443,6 +446,8 @@ function populateTestEditDropdowns(test) {
 }
 
 async function openTestEditModal(testId) {
+    elements.testEditModalTitle.textContent = 'Edit Test';
+    elements.saveTestEditLabel.textContent = 'Save Changes';
     elements.editTestMessage.textContent = 'Loading test details...';
     elements.editTestMessage.className = 'small mt-3 text-muted';
     elements.saveTestEditBtn.disabled = true;
@@ -475,11 +480,48 @@ async function openTestEditModal(testId) {
     }
 }
 
+async function openCreateTestModal() {
+    elements.testEditModalTitle.textContent = 'Create Test';
+    elements.saveTestEditLabel.textContent = 'Create Test';
+    elements.editTestMessage.textContent = 'Loading form...';
+    elements.editTestMessage.className = 'small mt-3 text-muted';
+    elements.saveTestEditBtn.disabled = true;
+
+    try {
+        await fetchQuestionPaperOptions();
+        const section = availableSections.find((item) => item.id === currentSectionId) || availableSections[0] || {};
+        currentEditingTest = {
+            id: '',
+            isNew: true,
+            testName: '',
+            testDate: getIsoDateInputValue(new Date()),
+            sectionId: section.id || '',
+            sectionName: section.name || '',
+            questionPaperID: '',
+        };
+        populateTestEditDropdowns(currentEditingTest);
+        elements.editTestId.value = '';
+        elements.editTestName.value = '';
+        elements.editTestDate.value = currentEditingTest.testDate;
+        elements.editTestMessage.textContent = '';
+        elements.saveTestEditBtn.disabled = false;
+        new bootstrap.Modal(elements.testEditModal).show();
+    } catch (error) {
+        console.error('Open create test modal:', error);
+        currentEditingTest = null;
+        elements.editTestMessage.textContent = error.message || 'Unable to prepare create test form.';
+        elements.editTestMessage.className = 'small mt-3 text-danger';
+    }
+}
+
 async function saveTestEdit() {
     if (!currentEditingTest || !currentUser) return;
 
     const selectedSection = availableSections.find((section) => section.id === elements.editTestSection.value);
-    const before = getTestEditFieldSnapshot(currentEditingTest);
+    const isNewTest = currentEditingTest.isNew === true;
+    const before = isNewTest
+        ? { testName: '', testDate: '', sectionId: '', sectionName: '', questionPaperID: '' }
+        : getTestEditFieldSnapshot(currentEditingTest);
     const after = {
         testName: elements.editTestName.value.trim(),
         testDate: elements.editTestDate.value,
@@ -499,19 +541,20 @@ async function saveTestEdit() {
         elements.editTestMessage.className = 'small mt-3 text-danger';
         return;
     }
-    if (changedFields.length === 0) {
+    if (!isNewTest && changedFields.length === 0) {
         elements.editTestMessage.textContent = 'No changes to save.';
         elements.editTestMessage.className = 'small mt-3 text-muted';
         return;
     }
 
     elements.saveTestEditBtn.disabled = true;
-    elements.editTestMessage.textContent = 'Saving changes...';
+    elements.editTestMessage.textContent = isNewTest ? 'Creating test...' : 'Saving changes...';
     elements.editTestMessage.className = 'small mt-3 text-muted';
 
     try {
         const batch = firestore.batch();
-        batch.update(firestore.collection('tests').doc(currentEditingTest.id), {
+        const testRef = isNewTest ? firestore.collection('tests').doc() : firestore.collection('tests').doc(currentEditingTest.id);
+        const testData = {
             testName: after.testName,
             testDate: after.testDate,
             sectionId: after.sectionId,
@@ -519,8 +562,20 @@ async function saveTestEdit() {
             questionPaperID: after.questionPaperID,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             updatedBy: currentUser.email || currentUser.uid || '',
-        });
-        addTestEditAuditLog(batch, currentUser, currentEditingTest.id, before, after, changedFields);
+        };
+        if (isNewTest) {
+            batch.set(testRef, {
+                ...testData,
+                class: '',
+                templateName: '',
+                year: '',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdBy: currentUser.email || currentUser.uid || '',
+            });
+        } else {
+            batch.update(testRef, testData);
+        }
+        addTestEditAuditLog(batch, currentUser, testRef.id, before, after, changedFields, isNewTest ? 'test_create' : 'test_edit');
         await batch.commit();
 
         bootstrap.Modal.getInstance(elements.testEditModal)?.hide();
@@ -1339,6 +1394,7 @@ async function getResultCount(testId) {
 }
 
 // Refresh tests
+elements.createTestBtn.onclick = () => openCreateTestModal();
 elements.refreshTests.onclick = () => loadTests();
 elements.saveTestEditBtn.onclick = () => saveTestEdit();
 elements.confirmBubbleImportBtn.onclick = () => confirmStudentBubblesImport();

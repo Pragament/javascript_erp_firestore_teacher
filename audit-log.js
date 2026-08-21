@@ -151,6 +151,7 @@ function getActionLabel(actionType) {
   if (actionType === "answer_key_edit") return "Answer Key";
   if (actionType === "student_answer_edit") return "Student Answer";
   if (actionType === "test_edit") return "Test";
+  if (actionType === "test_create") return "Test Created";
   if (actionType === "student_bubbles_import") return "Bubbles Import";
   return actionType || "Edit";
 }
@@ -166,7 +167,7 @@ function getChangeSummary(log) {
     const after = log.after?.status || "-";
     return `${before} -> ${after}`;
   }
-  if (log.actionType === "test_edit") {
+  if (log.actionType === "test_edit" || log.actionType === "test_create") {
     return (log.changedFields || []).join(", ") || "Test updated";
   }
   if (log.actionType === "student_bubbles_import") {
@@ -184,7 +185,7 @@ function getDetailText(log) {
   if (log.actionType === "student_answer_edit") {
     return `Student answer for ${log.statusKey || "question"} changed from ${log.before?.status || "-"} to ${log.after?.status || "-"}. Correct: ${log.correctLetters || "-"}.`;
   }
-  if (log.actionType === "test_edit") {
+  if (log.actionType === "test_edit" || log.actionType === "test_create") {
     return (log.changedFields || []).map((field) => {
       const before = log.before?.[field] || "-";
       const after = log.after?.[field] || "-";
