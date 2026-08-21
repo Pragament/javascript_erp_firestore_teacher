@@ -336,6 +336,46 @@
         </div>
     </div>
 
+    <!-- Test Edit Modal -->
+    <div class="modal fade" id="testEditModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header text-white" style="background:#2c3e50;">
+                    <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Edit Test</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="edit-test-id">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="edit-test-name" class="form-label fw-semibold">Test Name</label>
+                            <input id="edit-test-name" class="form-control" type="text">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit-test-date" class="form-label fw-semibold">Test Date</label>
+                            <input id="edit-test-date" class="form-control" type="date">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit-test-section" class="form-label fw-semibold">Section</label>
+                            <select id="edit-test-section" class="form-select"></select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit-test-question-paper" class="form-label fw-semibold">Question Paper</label>
+                            <select id="edit-test-question-paper" class="form-select"></select>
+                        </div>
+                    </div>
+                    <div id="edit-test-message" class="small mt-3"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" id="save-test-edit-btn" class="btn" style="background:#16a085;color:white;border:none;">
+                        <i class="bi bi-save me-1"></i>Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Students Modal -->
     <div class="modal fade" id="studentsModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-xl">

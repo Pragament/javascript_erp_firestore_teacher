@@ -150,6 +150,7 @@ function formatTimestamp(value) {
 function getActionLabel(actionType) {
   if (actionType === "answer_key_edit") return "Answer Key";
   if (actionType === "student_answer_edit") return "Student Answer";
+  if (actionType === "test_edit") return "Test";
   return actionType || "Edit";
 }
 
@@ -164,6 +165,9 @@ function getChangeSummary(log) {
     const after = log.after?.status || "-";
     return `${before} -> ${after}`;
   }
+  if (log.actionType === "test_edit") {
+    return (log.changedFields || []).join(", ") || "Test updated";
+  }
   return "-";
 }
 
@@ -175,6 +179,13 @@ function getDetailText(log) {
   }
   if (log.actionType === "student_answer_edit") {
     return `Student answer for ${log.statusKey || "question"} changed from ${log.before?.status || "-"} to ${log.after?.status || "-"}. Correct: ${log.correctLetters || "-"}.`;
+  }
+  if (log.actionType === "test_edit") {
+    return (log.changedFields || []).map((field) => {
+      const before = log.before?.[field] || "-";
+      const after = log.after?.[field] || "-";
+      return `${field}: ${before} -> ${after}`;
+    }).join("; ");
   }
   return "";
 }

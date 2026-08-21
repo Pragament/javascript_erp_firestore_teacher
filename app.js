@@ -97,7 +97,15 @@ const elements = {
     eventPSEDTags: document.getElementById('event-psed-tags'),
     eventCustomTagsInput: document.getElementById('event-custom-tags'),
     saveEventBtn: document.getElementById('save-event-btn'),
-    deleteEventBtn: document.getElementById('delete-event-btn')
+    deleteEventBtn: document.getElementById('delete-event-btn'),
+    testEditModal: document.getElementById('testEditModal'),
+    editTestId: document.getElementById('edit-test-id'),
+    editTestName: document.getElementById('edit-test-name'),
+    editTestDate: document.getElementById('edit-test-date'),
+    editTestSection: document.getElementById('edit-test-section'),
+    editTestQuestionPaper: document.getElementById('edit-test-question-paper'),
+    editTestMessage: document.getElementById('edit-test-message'),
+    saveTestEditBtn: document.getElementById('save-test-edit-btn')
 };
 
 let studentsDataTable = null;
@@ -111,6 +119,8 @@ let currentCalendarView = 'month'; // 'month', 'week', or 'day'
 let currentCalendarDate = new Date();
 let teacherEvents = [];
 let selectedPSEDIndicators = [];
+let currentEditingTest = null;
+let questionPaperOptions = [];
 
 // Teacher identifier for timetable matching
 let currentTeacherIdentifier = null;
@@ -351,6 +361,174 @@ async function getSubjectButtonsHtml(testId, test) {
     }
 }
 
+function getIsoDateInputValue(value) {
+    if (!value) return '';
+    const date = value?.toDate?.() || new Date(value);
+    if (!date || isNaN(date)) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getQuestionPaperOptionLabel(paper) {
+    const id = paper.questionPaperID || paper.id || '';
+    const name = paper.templateName || paper.testName || paper.name || paper.title || 'Question Paper';
+    const questionCount = Array.isArray(paper.questions) ? ` (${paper.questions.length} questions)` : '';
+    return `${name}${id ? ` - ${id}` : ''}${questionCount}`;
+}
+
+async function fetchQuestionPaperOptions() {
+    if (questionPaperOptions.length > 0) return questionPaperOptions;
+    const snapshot = await firestore.collection('questionpapers').get();
+    questionPaperOptions = snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => getQuestionPaperOptionLabel(a).localeCompare(getQuestionPaperOptionLabel(b), undefined, { numeric: true }));
+    return questionPaperOptions;
+}
+
+function getTestEditFieldSnapshot(test) {
+    return {
+        testName: test.testName || '',
+        testDate: getIsoDateInputValue(test.testDate),
+        sectionId: test.sectionId || '',
+        sectionName: test.sectionName || '',
+        questionPaperID: test.questionPaperID || '',
+    };
+}
+
+function getChangedTestFields(before, after) {
+    return Object.keys(after).filter((key) => String(before[key] || '') !== String(after[key] || ''));
+}
+
+function addTestEditAuditLog(batch, user, testId, before, after, changedFields) {
+    const auditRef = firestore.collection('resultEditAuditLogs').doc();
+    batch.set(auditRef, {
+        actionType: 'test_edit',
+        scope: 'test',
+        teacherUid: user.uid || '',
+        teacherEmail: user.email || '',
+        testId,
+        testName: after.testName || before.testName || '',
+        sectionId: after.sectionId || before.sectionId || '',
+        before,
+        after,
+        changedFields,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+}
+
+function populateTestEditDropdowns(test) {
+    elements.editTestSection.innerHTML = availableSections.map((section) => `
+        <option value="${escapeHtml(section.id)}"${section.id === test.sectionId ? ' selected' : ''}>
+            ${escapeHtml(section.name || section.id)}
+        </option>
+    `).join('');
+
+    elements.editTestQuestionPaper.innerHTML = [
+        '<option value="">No question paper</option>',
+        ...questionPaperOptions.map((paper) => {
+            const value = paper.questionPaperID || paper.id || '';
+            const selected = value === (test.questionPaperID || '') ? ' selected' : '';
+            return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(getQuestionPaperOptionLabel(paper))}</option>`;
+        }),
+    ].join('');
+}
+
+async function openTestEditModal(testId) {
+    elements.editTestMessage.textContent = 'Loading test details...';
+    elements.editTestMessage.className = 'small mt-3 text-muted';
+    elements.saveTestEditBtn.disabled = true;
+
+    try {
+        const [testSnap] = await Promise.all([
+            firestore.collection('tests').doc(testId).get(),
+            fetchQuestionPaperOptions(),
+        ]);
+
+        if (!testSnap.exists) throw new Error('Test not found.');
+        const test = { id: testSnap.id, ...testSnap.data() };
+        if (!availableSections.some((section) => section.id === test.sectionId)) {
+            throw new Error('You do not have access to edit this test.');
+        }
+
+        currentEditingTest = test;
+        populateTestEditDropdowns(test);
+        elements.editTestId.value = test.id;
+        elements.editTestName.value = test.testName || '';
+        elements.editTestDate.value = getIsoDateInputValue(test.testDate);
+        elements.editTestMessage.textContent = '';
+        elements.saveTestEditBtn.disabled = false;
+        new bootstrap.Modal(elements.testEditModal).show();
+    } catch (error) {
+        console.error('Open test edit modal:', error);
+        currentEditingTest = null;
+        elements.editTestMessage.textContent = error.message || 'Unable to load test details.';
+        elements.editTestMessage.className = 'small mt-3 text-danger';
+    }
+}
+
+async function saveTestEdit() {
+    if (!currentEditingTest || !currentUser) return;
+
+    const selectedSection = availableSections.find((section) => section.id === elements.editTestSection.value);
+    const before = getTestEditFieldSnapshot(currentEditingTest);
+    const after = {
+        testName: elements.editTestName.value.trim(),
+        testDate: elements.editTestDate.value,
+        sectionId: elements.editTestSection.value,
+        sectionName: selectedSection?.name || '',
+        questionPaperID: elements.editTestQuestionPaper.value,
+    };
+    const changedFields = getChangedTestFields(before, after);
+
+    if (!after.testName) {
+        elements.editTestMessage.textContent = 'Test name is required.';
+        elements.editTestMessage.className = 'small mt-3 text-danger';
+        return;
+    }
+    if (!after.sectionId || !selectedSection) {
+        elements.editTestMessage.textContent = 'Select a valid assigned section.';
+        elements.editTestMessage.className = 'small mt-3 text-danger';
+        return;
+    }
+    if (changedFields.length === 0) {
+        elements.editTestMessage.textContent = 'No changes to save.';
+        elements.editTestMessage.className = 'small mt-3 text-muted';
+        return;
+    }
+
+    elements.saveTestEditBtn.disabled = true;
+    elements.editTestMessage.textContent = 'Saving changes...';
+    elements.editTestMessage.className = 'small mt-3 text-muted';
+
+    try {
+        const batch = firestore.batch();
+        batch.update(firestore.collection('tests').doc(currentEditingTest.id), {
+            testName: after.testName,
+            testDate: after.testDate,
+            sectionId: after.sectionId,
+            sectionName: after.sectionName,
+            questionPaperID: after.questionPaperID,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: currentUser.email || currentUser.uid || '',
+        });
+        addTestEditAuditLog(batch, currentUser, currentEditingTest.id, before, after, changedFields);
+        await batch.commit();
+
+        bootstrap.Modal.getInstance(elements.testEditModal)?.hide();
+        if (after.sectionId !== currentSectionId) {
+            setCurrentSection(after.sectionId);
+        }
+        await loadTests();
+    } catch (error) {
+        console.error('Save test edit:', error);
+        elements.saveTestEditBtn.disabled = false;
+        elements.editTestMessage.textContent = error.message || 'Unable to save test changes.';
+        elements.editTestMessage.className = 'small mt-3 text-danger';
+    }
+}
+
 // Check if teacher exists in any school's teachers collection
 async function checkTeacherInSchools(email) {
     try {
@@ -568,11 +746,16 @@ async function loadTests() {
             html += `
                 <div class="test-card">
                     <div class="d-flex justify-content-between align-items-start mb-2">
-                        <h5 class="fw-bold">${test.testName || 'Test'}</h5>
-                        <span class="badge" style="background:#16a085;color:white">${resultCount} Results</span>
+                        <h5 class="fw-bold">${escapeHtml(test.testName || 'Test')}</h5>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-secondary edit-test-btn" data-test-id="${escapeHtml(doc.id)}" title="Edit test">
+                                <i class="bi bi-pencil-square"></i>
+                            </button>
+                            <span class="badge" style="background:#16a085;color:white">${resultCount} Results</span>
+                        </div>
                     </div>
                     <p class="text-muted mb-1"><i class="bi bi-calendar me-1"></i>${dateStr}</p>
-                    <p class="text-muted mb-3">${test.description || 'No description'}</p>
+                    <p class="text-muted mb-3">${escapeHtml(test.description || 'No description')}</p>
                     <a class="btn" style="background:#16a085;color:white;border:none"
                        href="${getTestResultsPageUrl(doc.id)}"
                        target="_blank">
@@ -585,6 +768,9 @@ async function loadTests() {
         
         html += '</div>';
         elements.testsContainer.innerHTML = html;
+        elements.testsContainer.querySelectorAll('.edit-test-btn').forEach((button) => {
+            button.addEventListener('click', () => openTestEditModal(button.dataset.testId));
+        });
     } catch (error) {
         console.error('Load tests:', error);
         elements.testsContainer.innerHTML = '<div class="p-4 text-center text-danger">Error loading tests</div>';
@@ -605,6 +791,7 @@ async function getResultCount(testId) {
 
 // Refresh tests
 elements.refreshTests.onclick = () => loadTests();
+elements.saveTestEditBtn.onclick = () => saveTestEdit();
 elements.sectionSelect.onchange = async (event) => {
     const nextSectionId = event.target.value;
     if (!nextSectionId || nextSectionId === currentSectionId) return;
