@@ -126,6 +126,8 @@
 .question-detail-option-text{min-width:0}
 .question-detail-save-message{min-height:1.2rem}
 @media (max-width:575.98px){.question-detail-option-check{grid-template-columns:22px 1fr}.question-detail-option-text{grid-column:2}}
+.audit-log-table .audit-detail-cell{white-space:normal;text-align:left;min-width:320px;max-width:520px;line-height:1.35}
+.audit-pagination{background:white;border:1px solid #dee2e6;border-radius:8px;padding:.75rem 1rem}
 
 /* Calendar Styles */
 .calendar-view{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;min-height:400px}

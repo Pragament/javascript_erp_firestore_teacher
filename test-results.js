@@ -754,6 +754,40 @@ function buildResultSummaryUpdates(result, metrics, rank, totalStudents, scoring
   };
 }
 
+function getQuestionCorrectOptionLabels(question, optionNumbers = []) {
+  return uniqueSortedOptionNumbers(optionNumbers)
+    .map((optionNumber) => {
+      const text = question.options?.[optionNumber - 1] || extractOptionText(question.raw?.[`Option ${optionNumber}`]);
+      return `Option ${optionNumber}${text ? `: ${plainTextFromRichHtml(text)}` : ""}`;
+    });
+}
+
+function getAuditBaseData(user, actionType, question) {
+  return {
+    actionType,
+    teacherUid: user.uid || "",
+    teacherEmail: user.email || "",
+    testId: currentTestData?.id || currentTestId || "",
+    testName: currentTestData?.testName || "",
+    sectionId: currentTestData?.sectionId || getSectionIdFromQuery() || "",
+    questionNumber: question?.questionNumber || null,
+    subject: question?.subject || "",
+    chapter: question?.chapter || "",
+    topic: question?.topic || "",
+    subtopic: question?.subtopic || "",
+    questionText: plainTextFromRichHtml(question?.questionText || "").slice(0, 500),
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function addAuditLogOperation(operations, data) {
+  operations.push({
+    type: "set",
+    ref: firestore.collection("resultEditAuditLogs").doc(),
+    data,
+  });
+}
+
 function buildResultRecalculationOperations(nextResults, scoringRules, perResultExtraData = new Map()) {
   const rankedRows = nextResults
     .map((result) => ({
@@ -791,8 +825,13 @@ async function commitBatches(operations) {
   const chunkSize = 450;
   for (let index = 0; index < operations.length; index += chunkSize) {
     const batch = firestore.batch();
-    operations.slice(index, index + chunkSize).forEach(({ ref, data }) => {
-      batch.update(ref, data);
+    operations.slice(index, index + chunkSize).forEach((operation) => {
+      if (!operation?.data || !operation?.ref) return;
+      if (operation.type === "set") {
+        batch.set(operation.ref, operation.data);
+      } else {
+        batch.update(operation.ref, operation.data);
+      }
     });
     await batch.commit();
   }
@@ -824,6 +863,7 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
       throw new Error("You do not have access to update this test.");
     }
 
+    const beforeCorrectOptions = question.correctOptions || [];
     const updatedQuestionRaw = buildUpdatedQuestionRaw(question, selectedNumbers);
     let nextQuestions = null;
     const operations = [];
@@ -880,6 +920,22 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
       if (statusKey) perResultExtraData.set(result.id || result.studentId, { [statusKey]: result[statusKey] });
     });
     operations.push(...buildResultRecalculationOperations(nextResults, getCurrentScoringRules(), perResultExtraData));
+    addAuditLogOperation(operations, {
+      ...getAuditBaseData(user, "answer_key_edit", question),
+      scope: "question",
+      before: {
+        correctOptions: beforeCorrectOptions,
+        correctLetters: getOptionLettersFromNumbers(beforeCorrectOptions).join("").toUpperCase(),
+        labels: getQuestionCorrectOptionLabels(question, beforeCorrectOptions),
+      },
+      after: {
+        correctOptions: selectedNumbers,
+        correctLetters: correctLetters.join("").toUpperCase(),
+        labels: getQuestionCorrectOptionLabels(question, selectedNumbers),
+      },
+      affectedResultCount: nextResults.length,
+      scoringRules: getCurrentScoringRules(),
+    });
 
     await commitBatches(operations);
 
@@ -934,6 +990,8 @@ async function saveStudentAnswerForQuestion(result, question, selectedOptionNumb
 
     const resultKey = result.id || result.studentId;
     const statusKey = findResultStatusKey(result, question) || getDefaultResultStatusKey(question);
+    const beforeStatus = normalizeText(result[statusKey], "-");
+    const beforeSelectedOptions = getStudentOptionNumbersFromStatus(beforeStatus, question.correctOptions || []);
     const nextStatus = buildStudentAnswerStatus(selectedNumbers, question.correctOptions || [], skipped);
     const nextResults = currentResultsData.map((item) =>
       (item.id || item.studentId) === resultKey
@@ -948,7 +1006,32 @@ async function saveStudentAnswerForQuestion(result, question, selectedOptionNumb
       }],
     ]);
 
-    await commitBatches(buildResultRecalculationOperations(nextResults, getCurrentScoringRules(), perResultExtraData));
+    const operations = buildResultRecalculationOperations(nextResults, getCurrentScoringRules(), perResultExtraData);
+    const student = getResultStudent(result, getStudentByIdMap(currentStudentsData));
+    addAuditLogOperation(operations, {
+      ...getAuditBaseData(user, "student_answer_edit", question),
+      scope: "student_question",
+      resultId: result.id || "",
+      studentId: result.studentId || result.id || "",
+      studentName: student?.name || result.name || "Unknown",
+      roll: getRollNumber(student, result),
+      statusKey,
+      before: {
+        status: beforeStatus,
+        selectedOptions: beforeSelectedOptions,
+        selectedLetters: getOptionLettersFromNumbers(beforeSelectedOptions).join("").toUpperCase(),
+      },
+      after: {
+        status: nextStatus,
+        selectedOptions: skipped ? [] : selectedNumbers,
+        selectedLetters: skipped ? "" : getOptionLettersFromNumbers(selectedNumbers).join("").toUpperCase(),
+      },
+      correctOptions: question.correctOptions || [],
+      correctLetters: getOptionLettersFromNumbers(question.correctOptions || []).join("").toUpperCase(),
+      scoringRules: getCurrentScoringRules(),
+    });
+
+    await commitBatches(operations);
 
     currentResultsData = nextResults;
     const subjectId = getSubjectIdFromQuery();

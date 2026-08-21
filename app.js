@@ -45,6 +45,7 @@ const elements = {
     sectionName: document.getElementById('section-name'),
     sectionInfo: document.getElementById('section-info'),
     analyticsLink: document.getElementById('analytics-link'),
+    auditLogLink: document.getElementById('audit-log-link'),
     sectionSwitcher: document.getElementById('section-switcher'),
     sectionSelect: document.getElementById('section-select'),
     testsContainer: document.getElementById('tests-container'),
@@ -247,6 +248,10 @@ function setCurrentSection(sectionId) {
     if (elements.analyticsLink) {
         const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
         elements.analyticsLink.href = `analytics.html${query}`;
+    }
+    if (elements.auditLogLink) {
+        const query = currentSectionId ? `?sectionId=${encodeURIComponent(currentSectionId)}` : '';
+        elements.auditLogLink.href = `audit-log.html${query}`;
     }
     const psedBulkLink = document.getElementById('psed-bulk-link');
     if (psedBulkLink) {
