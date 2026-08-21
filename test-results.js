@@ -288,7 +288,7 @@ function isSkippedStatus(status) {
 }
 
 function isRightStatus(status) {
-  return normalizeComparable(status) === "r";
+  return /^r(?:_[a-z0-9]+)?$/.test(normalizeComparable(status));
 }
 
 function getStatusClass(status) {
