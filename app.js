@@ -529,6 +529,130 @@ async function saveTestEdit() {
     }
 }
 
+function escapeCSV(value) {
+    const str = String(value ?? '');
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+}
+
+function rowsToCSV(rows) {
+    return rows.map((row) => row.map(escapeCSV).join(',')).join('\n');
+}
+
+function downloadCSV(filename, csv) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
+function getSafeFilenamePart(value, fallback = 'results') {
+    return String(value || fallback).trim().replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || fallback;
+}
+
+function getResultQuestionKeys(results) {
+    const keys = new Set();
+    results.forEach((result) => {
+        Object.keys(result || {}).forEach((key) => {
+            if (/^(.+_Q\d+|Q\d+)$/i.test(key)) keys.add(key);
+        });
+    });
+    return Array.from(keys).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function buildStudentLookup(students) {
+    const lookup = new Map();
+    students.forEach((student) => {
+        if (student.id) lookup.set(student.id, student);
+        if (student.studentId) lookup.set(student.studentId, student);
+    });
+    return lookup;
+}
+
+async function exportTestStudentResultsCSV(testId) {
+    const button = Array.from(elements.testsContainer.querySelectorAll('.export-test-results-btn'))
+        .find((item) => item.dataset.testId === testId);
+    const originalHtml = button?.innerHTML;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Exporting...';
+    }
+
+    try {
+        const testSnap = await firestore.collection('tests').doc(testId).get();
+        if (!testSnap.exists) throw new Error('Test not found.');
+        const test = { id: testSnap.id, ...testSnap.data() };
+        if (!availableSections.some((section) => section.id === test.sectionId)) {
+            throw new Error('You do not have access to export this test.');
+        }
+
+        const [resultsSnap, studentsSnap] = await Promise.all([
+            firestore.collection('results').where('testId', '==', testId).get(),
+            firestore.collection('students').where('sectionId', '==', test.sectionId).get(),
+        ]);
+        const results = resultsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const students = studentsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const studentLookup = buildStudentLookup(students);
+        const questionKeys = getResultQuestionKeys(results);
+        const rows = [
+            [
+                'Test_ID',
+                'Test_Name',
+                'Test_Date',
+                'Section_ID',
+                'Student_ID',
+                'Student_Name',
+                'Roll',
+                'Correct',
+                'Wrong',
+                'Skipped',
+                'Total',
+                'Percent',
+                'Marks',
+                'Rank',
+                ...questionKeys,
+            ],
+            ...results.map((result) => {
+                const student = studentLookup.get(result.studentId) || studentLookup.get(result.id) || {};
+                return [
+                    test.id,
+                    test.testName || '',
+                    getIsoDateInputValue(test.testDate),
+                    test.sectionId || '',
+                    result.studentId || result.id || '',
+                    student.name || result.name || '',
+                    student.rollNo || student.rollNumber || student.roll || result.rollNo || result.rollNumber || result.roll || '',
+                    result.correct ?? '',
+                    result.wrong ?? '',
+                    result.skipped ?? '',
+                    result.total ?? '',
+                    result.percent ?? '',
+                    result.earnedMarks ?? result.marks ?? '',
+                    result.rank ?? '',
+                    ...questionKeys.map((key) => result[key] ?? ''),
+                ];
+            }),
+        ];
+
+        downloadCSV(`${getSafeFilenamePart(test.testName || test.id, 'test')}-student-results.csv`, rowsToCSV(rows));
+    } catch (error) {
+        console.error('Export student results CSV:', error);
+        alert(error.message || 'Unable to export student results.');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
 // Check if teacher exists in any school's teachers collection
 async function checkTeacherInSchools(email) {
     try {
@@ -756,11 +880,17 @@ async function loadTests() {
                     </div>
                     <p class="text-muted mb-1"><i class="bi bi-calendar me-1"></i>${dateStr}</p>
                     <p class="text-muted mb-3">${escapeHtml(test.description || 'No description')}</p>
-                    <a class="btn" style="background:#16a085;color:white;border:none"
-                       href="${getTestResultsPageUrl(doc.id)}"
-                       target="_blank">
-                        <i class="bi bi-eye me-2"></i>View Student Results
-                    </a>
+                    <div class="d-flex flex-wrap gap-2">
+                        <a class="btn" style="background:#16a085;color:white;border:none"
+                           href="${getTestResultsPageUrl(doc.id)}"
+                           target="_blank">
+                            <i class="bi bi-eye me-2"></i>View Student Results
+                        </a>
+                        <button type="button" class="btn export-test-results-btn" style="background:#f1c40f;color:#2c3e50;border:none"
+                           data-test-id="${escapeHtml(doc.id)}">
+                            <i class="bi bi-download me-2"></i>Export CSV
+                        </button>
+                    </div>
                     ${subjectButtonsHtml}
                 </div>
             `;
@@ -770,6 +900,9 @@ async function loadTests() {
         elements.testsContainer.innerHTML = html;
         elements.testsContainer.querySelectorAll('.edit-test-btn').forEach((button) => {
             button.addEventListener('click', () => openTestEditModal(button.dataset.testId));
+        });
+        elements.testsContainer.querySelectorAll('.export-test-results-btn').forEach((button) => {
+            button.addEventListener('click', () => exportTestStudentResultsCSV(button.dataset.testId));
         });
     } catch (error) {
         console.error('Load tests:', error);
