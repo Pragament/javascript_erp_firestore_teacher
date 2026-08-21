@@ -336,6 +336,47 @@
         </div>
     </div>
 
+    <!-- Bubble Import Preview Modal -->
+    <div class="modal fade" id="bubbleImportPreviewModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header text-white" style="background:#8e44ad;">
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Preview Bubble Import</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="bubble-import-summary" class="alert alert-info mb-3"></div>
+                    <div id="bubble-import-unmatched" class="alert alert-warning d-none mb-3"></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Roll</th>
+                                    <th>Student</th>
+                                    <th>Correct</th>
+                                    <th>Wrong</th>
+                                    <th>Skipped</th>
+                                    <th>Total</th>
+                                    <th>Marks</th>
+                                    <th>Percent</th>
+                                    <th>Rank</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bubble-import-preview-body"></tbody>
+                        </table>
+                    </div>
+                    <div id="bubble-import-preview-note" class="small text-muted"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" id="confirm-bubble-import-btn" class="btn" style="background:#8e44ad;color:white;border:none;">
+                        <i class="bi bi-check2-circle me-1"></i>Confirm Import
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Test Edit Modal -->
     <div class="modal fade" id="testEditModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg">

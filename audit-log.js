@@ -151,6 +151,7 @@ function getActionLabel(actionType) {
   if (actionType === "answer_key_edit") return "Answer Key";
   if (actionType === "student_answer_edit") return "Student Answer";
   if (actionType === "test_edit") return "Test";
+  if (actionType === "student_bubbles_import") return "Bubbles Import";
   return actionType || "Edit";
 }
 
@@ -167,6 +168,9 @@ function getChangeSummary(log) {
   }
   if (log.actionType === "test_edit") {
     return (log.changedFields || []).join(", ") || "Test updated";
+  }
+  if (log.actionType === "student_bubbles_import") {
+    return `${log.importedRows || 0} rows, ${log.questionCount || 0} questions`;
   }
   return "-";
 }
@@ -186,6 +190,10 @@ function getDetailText(log) {
       const after = log.after?.[field] || "-";
       return `${field}: ${before} -> ${after}`;
     }).join("; ");
+  }
+  if (log.actionType === "student_bubbles_import") {
+    const unmatched = (log.unmatchedRolls || []).length ? ` Unmatched rolls: ${log.unmatchedRolls.join(", ")}.` : "";
+    return `Imported ${log.importedRows || 0} student row(s) from ${log.fileName || "CSV"} for ${log.questionCount || 0} question(s).${unmatched}`;
   }
   return "";
 }

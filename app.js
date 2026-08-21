@@ -105,7 +105,13 @@ const elements = {
     editTestSection: document.getElementById('edit-test-section'),
     editTestQuestionPaper: document.getElementById('edit-test-question-paper'),
     editTestMessage: document.getElementById('edit-test-message'),
-    saveTestEditBtn: document.getElementById('save-test-edit-btn')
+    saveTestEditBtn: document.getElementById('save-test-edit-btn'),
+    bubbleImportPreviewModal: document.getElementById('bubbleImportPreviewModal'),
+    bubbleImportSummary: document.getElementById('bubble-import-summary'),
+    bubbleImportUnmatched: document.getElementById('bubble-import-unmatched'),
+    bubbleImportPreviewBody: document.getElementById('bubble-import-preview-body'),
+    bubbleImportPreviewNote: document.getElementById('bubble-import-preview-note'),
+    confirmBubbleImportBtn: document.getElementById('confirm-bubble-import-btn')
 };
 
 let studentsDataTable = null;
@@ -121,6 +127,7 @@ let teacherEvents = [];
 let selectedPSEDIndicators = [];
 let currentEditingTest = null;
 let questionPaperOptions = [];
+let pendingBubbleImport = null;
 
 // Teacher identifier for timetable matching
 let currentTeacherIdentifier = null;
@@ -576,6 +583,165 @@ function buildStudentLookup(students) {
     return lookup;
 }
 
+function normalizeImportComparable(value) {
+    return String(value ?? '').trim().toLowerCase();
+}
+
+function parseCSVText(text) {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        const next = text[index + 1];
+
+        if (char === '"' && inQuotes && next === '"') {
+            cell += '"';
+            index += 1;
+        } else if (char === '"') {
+            inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+            row.push(cell);
+            cell = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && next === '\n') index += 1;
+            row.push(cell);
+            if (row.some((value) => String(value).trim() !== '')) rows.push(row);
+            row = [];
+            cell = '';
+        } else {
+            cell += char;
+        }
+    }
+
+    row.push(cell);
+    if (row.some((value) => String(value).trim() !== '')) rows.push(row);
+    return rows;
+}
+
+function getQuestionNumberFromImportHeader(header) {
+    const match = String(header || '').trim().match(/^q(?:uestion)?\s*(\d+)$/i);
+    return match ? Number(match[1]) : null;
+}
+
+function extractOptionTextForImport(value) {
+    if (value == null) return '';
+    if (typeof value === 'object') return String(value.optionText || value.text || value.label || value.value || '').trim();
+    return String(value).trim().replace(/^Option\s*\d+\s*[:.)-]?\s*/i, '').trim();
+}
+
+function getQuestionNumberForImport(question, index) {
+    const parsed = String(question?.subjectname_questionnumber || '').match(/_(?:Q)?(\d+)$/i);
+    if (parsed) return Number(parsed[1]);
+    if (Number.isFinite(Number(question?.questionNumber))) return Number(question.questionNumber);
+    return index + 1;
+}
+
+function getQuestionSubjectForImport(question) {
+    return String(question?.Subject || question?.subject || question?.section || question?.subjectName || 'General').trim() || 'General';
+}
+
+function getOptionNumbersFromImportValue(value) {
+    const normalized = normalizeImportComparable(value);
+    if (!normalized || normalized === '-' || normalized === 's' || normalized === 'skip' || normalized === 'skipped') return [];
+    const tokens = normalized.match(/[a-d]|[1-4]/g) || [];
+    const numbers = tokens.map((token) => {
+        if (/^[1-4]$/.test(token)) return Number(token);
+        return ['a', 'b', 'c', 'd'].indexOf(token) + 1;
+    }).filter(Boolean);
+    return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
+function getOptionLettersFromImportNumbers(optionNumbers) {
+    return [...new Set(optionNumbers || [])]
+        .sort((a, b) => a - b)
+        .map((optionNumber) => ['a', 'b', 'c', 'd'][Number(optionNumber) - 1])
+        .filter(Boolean);
+}
+
+function getCorrectOptionNumbersForImport(question) {
+    const explicit = [
+        ...getOptionNumbersFromImportValue(question?.['Correct Option']),
+        ...getOptionNumbersFromImportValue(question?.['Correct Options']),
+    ];
+    if (explicit.length > 0) return [...new Set(explicit)].sort((a, b) => a - b);
+
+    const objectCorrect = [];
+    for (let optionIndex = 1; optionIndex <= 4; optionIndex += 1) {
+        const optionValue = question?.[`Option ${optionIndex}`];
+        if (optionValue && typeof optionValue === 'object' && optionValue.correct === true) objectCorrect.push(optionIndex);
+    }
+    if (objectCorrect.length > 0) return objectCorrect;
+
+    const answerText = normalizeImportComparable(question?.Answer || question?.CorrectAnswer || question?.correctAnswer);
+    if (!answerText) return [];
+
+    const matched = [];
+    for (let optionIndex = 1; optionIndex <= 4; optionIndex += 1) {
+        const optionText = normalizeImportComparable(extractOptionTextForImport(question?.[`Option ${optionIndex}`]));
+        if (optionText && optionText === answerText) matched.push(optionIndex);
+    }
+    return matched;
+}
+
+function buildQuestionImportDetails(test, questionPaper) {
+    return (questionPaper?.questions || test?.questions || []).map((question, index) => {
+        const questionNumber = getQuestionNumberForImport(question, index);
+        const subject = getQuestionSubjectForImport(question);
+        return {
+            questionNumber,
+            subject,
+            statusKey: `${subject}_Q${questionNumber}`,
+            correctOptions: getCorrectOptionNumbersForImport(question),
+        };
+    });
+}
+
+function buildImportedAnswerStatus(selectedOptions, correctOptions) {
+    if (!selectedOptions.length) return 's';
+    const selectedLetters = getOptionLettersFromImportNumbers(selectedOptions);
+    const correctLetters = getOptionLettersFromImportNumbers(correctOptions);
+    const selectedKey = selectedLetters.join('');
+    return selectedKey === correctLetters.join('') ? `r_${selectedKey}` : selectedKey;
+}
+
+function calculateImportedMetrics(result) {
+    const counts = { correct: 0, wrong: 0, skipped: 0, total: 0 };
+    Object.keys(result || {}).forEach((key) => {
+        if (!/^(.+_Q\d+|Q\d+)$/i.test(key)) return;
+        const value = normalizeImportComparable(result[key]);
+        if (/^r(?:_[a-z0-9]+)?$/.test(value)) counts.correct += 1;
+        else if (value === 's') counts.skipped += 1;
+        else counts.wrong += 1;
+        counts.total += 1;
+    });
+    const earnedMarks = counts.correct * 3 + counts.wrong * -1;
+    const maxMarks = counts.total * 3;
+    const marks = maxMarks > 0 ? Math.max(0, Math.min(100, (earnedMarks / maxMarks) * 100)) : 0;
+    return {
+        ...counts,
+        earnedMarks,
+        maxMarks,
+        marks,
+        percent: Math.round(marks),
+    };
+}
+
+function getStudentRollValue(student, result = {}) {
+    return String(student?.rollNo || student?.rollNumber || student?.roll || student?.admissionNo || result.rollNo || result.rollNumber || result.roll || '').trim();
+}
+
+function buildRollStudentLookup(students) {
+    const lookup = new Map();
+    students.forEach((student) => {
+        const roll = getStudentRollValue(student);
+        if (roll) lookup.set(roll, student);
+    });
+    return lookup;
+}
+
 async function exportTestStudentResultsCSV(testId) {
     const button = Array.from(elements.testsContainer.querySelectorAll('.export-test-results-btn'))
         .find((item) => item.dataset.testId === testId);
@@ -650,6 +816,237 @@ async function exportTestStudentResultsCSV(testId) {
             button.disabled = false;
             button.innerHTML = originalHtml;
         }
+    }
+}
+
+async function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Unable to read file.'));
+        reader.readAsText(file);
+    });
+}
+
+function showBubbleImportPreview(importData) {
+    pendingBubbleImport = importData;
+    const previewRows = importData.importedResults.slice(0, 25);
+    elements.bubbleImportSummary.innerHTML = `
+        <strong>${escapeHtml(importData.test.testName || 'Test')}</strong><br>
+        ${importData.importedResults.length} matched student row${importData.importedResults.length === 1 ? '' : 's'},
+        ${importData.questionColumns.length} question column${importData.questionColumns.length === 1 ? '' : 's'}.
+        Firestore will be updated only after confirmation.
+    `;
+    if (importData.unmatchedRolls.length) {
+        elements.bubbleImportUnmatched.classList.remove('d-none');
+        elements.bubbleImportUnmatched.textContent = `Unmatched rolls will be skipped: ${importData.unmatchedRolls.join(', ')}`;
+    } else {
+        elements.bubbleImportUnmatched.classList.add('d-none');
+        elements.bubbleImportUnmatched.textContent = '';
+    }
+
+    elements.bubbleImportPreviewBody.innerHTML = previewRows.map((result) => `
+        <tr>
+            <td>${escapeHtml(result.rollNo || '')}</td>
+            <td>${escapeHtml(result.name || result.studentId || '')}</td>
+            <td>${escapeHtml(result.correct ?? '')}</td>
+            <td>${escapeHtml(result.wrong ?? '')}</td>
+            <td>${escapeHtml(result.skipped ?? '')}</td>
+            <td>${escapeHtml(result.total ?? '')}</td>
+            <td>${escapeHtml(result.earnedMarks ?? '')}</td>
+            <td>${escapeHtml(result.percent ?? '')}</td>
+            <td>${escapeHtml(result.previewRank ?? '')}</td>
+        </tr>
+    `).join('');
+    elements.bubbleImportPreviewNote.textContent = importData.importedResults.length > previewRows.length
+        ? `Showing first ${previewRows.length} rows. Confirm will import all ${importData.importedResults.length} matched rows.`
+        : '';
+    elements.confirmBubbleImportBtn.disabled = false;
+    new bootstrap.Modal(elements.bubbleImportPreviewModal).show();
+}
+
+async function prepareStudentBubblesImport(testId, file) {
+    const button = Array.from(elements.testsContainer.querySelectorAll('.import-bubbles-btn'))
+        .find((item) => item.dataset.testId === testId);
+    const originalHtml = button?.innerHTML;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Preparing...';
+    }
+
+    try {
+        const csvText = await readFileAsText(file);
+        const rows = parseCSVText(csvText);
+        if (rows.length < 2) throw new Error('CSV must include a header row and student rows.');
+
+        const headers = rows[0].map((header) => String(header || '').trim());
+        const rollIndex = headers.findIndex((header) => /^roll(?:\s*no|number)?$/i.test(header));
+        if (rollIndex < 0) throw new Error('CSV must include a Roll column.');
+
+        const questionColumns = headers
+            .map((header, index) => ({ index, questionNumber: getQuestionNumberFromImportHeader(header) }))
+            .filter((column) => column.questionNumber);
+        if (questionColumns.length === 0) throw new Error('CSV must include question columns like q1, q2, q3.');
+
+        const testSnap = await firestore.collection('tests').doc(testId).get();
+        if (!testSnap.exists) throw new Error('Test not found.');
+        const test = { id: testSnap.id, ...testSnap.data() };
+        if (!availableSections.some((section) => section.id === test.sectionId)) {
+            throw new Error('You do not have access to import this test.');
+        }
+
+        const [questionPaper, studentsSnap, existingResultsSnap] = await Promise.all([
+            fetchQuestionPaper(test.questionPaperID),
+            firestore.collection('students').where('sectionId', '==', test.sectionId).get(),
+            firestore.collection('results').where('testId', '==', testId).get(),
+        ]);
+        const questionDetails = buildQuestionImportDetails(test, questionPaper);
+        const questionByNumber = new Map(questionDetails.map((question) => [question.questionNumber, question]));
+        const missingQuestions = questionColumns
+            .map((column) => column.questionNumber)
+            .filter((questionNumber) => !questionByNumber.has(questionNumber));
+        if (missingQuestions.length > 0) {
+            throw new Error(`Question paper missing q${missingQuestions.slice(0, 5).join(', q')}.`);
+        }
+
+        const students = studentsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const rollLookup = buildRollStudentLookup(students);
+        const existingResults = existingResultsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const existingByStudentId = new Map(existingResults.map((result) => [result.studentId || result.id, result]));
+        const importedStudentIds = new Set();
+        const unmatchedRolls = [];
+        const importedResults = [];
+
+        rows.slice(1).forEach((row) => {
+            const roll = String(row[rollIndex] || '').trim();
+            if (!roll) return;
+            const student = rollLookup.get(roll);
+            if (!student) {
+                unmatchedRolls.push(roll);
+                return;
+            }
+
+            const studentId = student.studentId || student.id;
+            const resultId = `${testId}_${studentId}`;
+            const existing = existingByStudentId.get(studentId) || {};
+            const nextResult = {
+                ...existing,
+                id: existing.id || resultId,
+                testId,
+                studentId,
+                name: student.name || existing.name || '',
+                rollNo: getStudentRollValue(student, existing),
+                sectionId: test.sectionId || '',
+                testName: test.testName || '',
+                importedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                importedBy: currentUser.email || currentUser.uid || '',
+            };
+
+            questionColumns.forEach((column) => {
+                const question = questionByNumber.get(column.questionNumber);
+                const selectedOptions = getOptionNumbersFromImportValue(row[column.index]);
+                nextResult[question.statusKey] = buildImportedAnswerStatus(selectedOptions, question.correctOptions);
+            });
+
+            const metrics = calculateImportedMetrics(nextResult);
+            Object.assign(nextResult, metrics);
+            importedStudentIds.add(studentId);
+            importedResults.push(nextResult);
+        });
+
+        if (importedResults.length === 0) {
+            throw new Error(unmatchedRolls.length ? 'No CSV rolls matched students in this section.' : 'No student rows found to import.');
+        }
+
+        const nextResultsByKey = new Map(existingResults.map((result) => [result.studentId || result.id, { ...result }]));
+        importedResults.forEach((result) => nextResultsByKey.set(result.studentId || result.id, result));
+        const allResults = Array.from(nextResultsByKey.values()).map((result) => {
+            const metrics = calculateImportedMetrics(result);
+            return { ...result, ...metrics };
+        });
+        const ranked = [...allResults].sort((a, b) => {
+            if ((b.earnedMarks || 0) !== (a.earnedMarks || 0)) return (b.earnedMarks || 0) - (a.earnedMarks || 0);
+            return (b.marks || 0) - (a.marks || 0);
+        });
+        const rankByStudentId = new Map(ranked.map((result, index) => [result.studentId || result.id, index + 1]));
+        const previewImportedResults = importedResults.map((result) => ({
+            ...result,
+            previewRank: rankByStudentId.get(result.studentId || result.id) || 0,
+        }));
+
+        showBubbleImportPreview({
+            testId,
+            test,
+            importedResults: previewImportedResults,
+            allResults,
+            importedStudentIds,
+            existingResults,
+            rankByStudentId,
+            unmatchedRolls,
+            questionColumns,
+            fileName: file.name || '',
+        });
+    } catch (error) {
+        console.error('Import student bubbles CSV:', error);
+        alert(error.message || 'Unable to import student bubbles CSV.');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function confirmStudentBubblesImport() {
+    if (!pendingBubbleImport) return;
+    const importData = pendingBubbleImport;
+    elements.confirmBubbleImportBtn.disabled = true;
+    elements.confirmBubbleImportBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+
+    try {
+        const batch = firestore.batch();
+        importData.allResults.forEach((result) => {
+            const studentId = result.studentId || result.id;
+            const docId = result.id || `${importData.testId}_${studentId}`;
+            const rank = importData.rankByStudentId.get(studentId) || 0;
+            const percentile = importData.allResults.length ? ((importData.allResults.length - rank + 1) / importData.allResults.length) * 100 : 0;
+            const { id, ...data } = {
+                ...result,
+                rank,
+                percentile,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            };
+            const ref = firestore.collection('results').doc(docId);
+            if (importData.importedStudentIds.has(studentId) || importData.existingResults.some((existing) => existing.id === docId)) {
+                batch.set(ref, data, { merge: true });
+            }
+        });
+        batch.set(firestore.collection('resultEditAuditLogs').doc(), {
+            actionType: 'student_bubbles_import',
+            scope: 'test',
+            teacherUid: currentUser.uid || '',
+            teacherEmail: currentUser.email || '',
+            testId: importData.testId,
+            testName: importData.test.testName || '',
+            sectionId: importData.test.sectionId || '',
+            importedRows: importData.importedResults.length,
+            unmatchedRolls: importData.unmatchedRolls,
+            questionCount: importData.questionColumns.length,
+            fileName: importData.fileName || '',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+        await batch.commit();
+
+        bootstrap.Modal.getInstance(elements.bubbleImportPreviewModal)?.hide();
+        pendingBubbleImport = null;
+        alert(`Imported ${importData.importedResults.length} student row${importData.importedResults.length === 1 ? '' : 's'}.${importData.unmatchedRolls.length ? ` Unmatched rolls: ${importData.unmatchedRolls.join(', ')}` : ''}`);
+        await loadTests();
+    } catch (error) {
+        console.error('Confirm student bubbles import:', error);
+        alert(error.message || 'Unable to save imported student bubbles.');
+    } finally {
+        elements.confirmBubbleImportBtn.disabled = false;
+        elements.confirmBubbleImportBtn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirm Import';
     }
 }
 
@@ -890,6 +1287,11 @@ async function loadTests() {
                            data-test-id="${escapeHtml(doc.id)}">
                             <i class="bi bi-download me-2"></i>Export CSV
                         </button>
+                        <button type="button" class="btn import-bubbles-btn" style="background:#8e44ad;color:white;border:none"
+                           data-test-id="${escapeHtml(doc.id)}">
+                            <i class="bi bi-upload me-2"></i>Import Bubbles CSV
+                        </button>
+                        <input type="file" class="d-none import-bubbles-input" data-test-id="${escapeHtml(doc.id)}" accept=".csv,text/csv">
                     </div>
                     ${subjectButtonsHtml}
                 </div>
@@ -903,6 +1305,20 @@ async function loadTests() {
         });
         elements.testsContainer.querySelectorAll('.export-test-results-btn').forEach((button) => {
             button.addEventListener('click', () => exportTestStudentResultsCSV(button.dataset.testId));
+        });
+        elements.testsContainer.querySelectorAll('.import-bubbles-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                const input = Array.from(elements.testsContainer.querySelectorAll('.import-bubbles-input'))
+                    .find((item) => item.dataset.testId === button.dataset.testId);
+                if (input) input.click();
+            });
+        });
+        elements.testsContainer.querySelectorAll('.import-bubbles-input').forEach((input) => {
+            input.addEventListener('change', () => {
+                const file = input.files?.[0];
+                if (file) prepareStudentBubblesImport(input.dataset.testId, file);
+                input.value = '';
+            });
         });
     } catch (error) {
         console.error('Load tests:', error);
@@ -925,6 +1341,7 @@ async function getResultCount(testId) {
 // Refresh tests
 elements.refreshTests.onclick = () => loadTests();
 elements.saveTestEditBtn.onclick = () => saveTestEdit();
+elements.confirmBubbleImportBtn.onclick = () => confirmStudentBubblesImport();
 elements.sectionSelect.onchange = async (event) => {
     const nextSectionId = event.target.value;
     if (!nextSectionId || nextSectionId === currentSectionId) return;
