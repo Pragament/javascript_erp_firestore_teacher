@@ -103,6 +103,8 @@
 @media (max-width:575.98px){.report-page.test-results-page{padding:.75rem}.student-results-table{font-size:.86rem}.student-results-table th,.student-results-table td{padding:.5rem .55rem}.student-results-table th:nth-child(1),.student-results-table td:nth-child(1){min-width:42px}.student-results-table th:nth-child(3),.student-results-table td:nth-child(3){left:42px;min-width:150px;max-width:150px;overflow:hidden;text-overflow:ellipsis}.student-results-phone-cell{font-size:.8rem;letter-spacing:0;max-width:128px;overflow:hidden;text-overflow:ellipsis}}
 .subject-question-header{border:0;background:transparent;color:inherit;font-weight:700;cursor:pointer;padding:0;min-width:28px}
 .subject-status-cell{color:white;font-weight:700;min-width:42px}
+.subject-status-edit{border:0;background:transparent;color:inherit;font:inherit;font-weight:700;width:100%;min-width:42px;padding:.15rem .25rem;cursor:pointer}
+.subject-status-edit:focus-visible{outline:2px solid #111;outline-offset:2px}
 .subject-status-right{background:#007a0b}
 .subject-status-wrong{background:#ff1710}
 .subject-status-skipped{background:#d9d9d9;color:white}

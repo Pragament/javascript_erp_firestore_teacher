@@ -355,6 +355,22 @@ function getRecalculatedQuestionStatus(rawStatus, correctOptionNumbers) {
     : selectedLetters.join("");
 }
 
+function getStudentOptionNumbersFromStatus(status, correctOptionNumbers = []) {
+  const selectedLetters = getSelectedOptionLettersFromStatus(status);
+  if (selectedLetters.length > 0) return uniqueSortedOptionNumbers(selectedLetters);
+  return isRightStatus(status) ? uniqueSortedOptionNumbers(correctOptionNumbers) : [];
+}
+
+function buildStudentAnswerStatus(selectedOptionNumbers, correctOptionNumbers, skipped = false) {
+  if (skipped) return "s";
+  const selectedLetters = getOptionLettersFromNumbers(selectedOptionNumbers);
+  const correctLetters = getOptionLettersFromNumbers(correctOptionNumbers);
+  if (selectedLetters.length === 0) return "s";
+  return areSameOptionLetters(selectedLetters, correctLetters)
+    ? buildRightStatus(selectedLetters)
+    : selectedLetters.join("");
+}
+
 function getStatusClass(status) {
   if (!status) return "subject-status-empty";
   if (isRightStatus(status)) return "subject-status-right";
@@ -738,6 +754,39 @@ function buildResultSummaryUpdates(result, metrics, rank, totalStudents, scoring
   };
 }
 
+function buildResultRecalculationOperations(nextResults, scoringRules, perResultExtraData = new Map()) {
+  const rankedRows = nextResults
+    .map((result) => ({
+      result,
+      metrics: calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules),
+    }))
+    .sort((a, b) => {
+      if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
+      return b.metrics.marks - a.metrics.marks;
+    });
+  const rankByResultId = new Map(rankedRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
+
+  return nextResults
+    .filter((result) => result.id)
+    .map((result) => {
+      const resultKey = result.id || result.studentId;
+      const metrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
+      return {
+        ref: firestore.collection("results").doc(result.id),
+        data: {
+          ...buildResultSummaryUpdates(
+            result,
+            metrics,
+            rankByResultId.get(resultKey) || 0,
+            nextResults.length,
+            scoringRules
+          ),
+          ...(perResultExtraData.get(resultKey) || {}),
+        },
+      };
+    });
+}
+
 async function commitBatches(operations) {
   const chunkSize = 450;
   for (let index = 0; index < operations.length; index += chunkSize) {
@@ -825,35 +874,12 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
       return nextResult;
     });
 
-    const scoringRules = getCurrentScoringRules();
-    const rankedRows = nextResults
-      .map((result) => ({
-        result,
-        metrics: calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules),
-      }))
-      .sort((a, b) => {
-        if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
-        return b.metrics.marks - a.metrics.marks;
-      });
-    const rankByResultId = new Map(rankedRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
-
+    const perResultExtraData = new Map();
     nextResults.forEach((result) => {
-      if (!result.id) return;
       const statusKey = findResultStatusKey(result, question);
-      const metrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
-      const data = buildResultSummaryUpdates(
-        result,
-        metrics,
-        rankByResultId.get(result.id || result.studentId) || 0,
-        nextResults.length,
-        scoringRules
-      );
-      if (statusKey) data[statusKey] = result[statusKey];
-      operations.push({
-        ref: firestore.collection("results").doc(result.id),
-        data,
-      });
+      if (statusKey) perResultExtraData.set(result.id || result.studentId, { [statusKey]: result[statusKey] });
     });
+    operations.push(...buildResultRecalculationOperations(nextResults, getCurrentScoringRules(), perResultExtraData));
 
     await commitBatches(operations);
 
@@ -874,6 +900,169 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
     messageEl.textContent = error.message || "Unable to save correct options.";
     messageEl.className = "question-detail-save-message text-danger";
   }
+}
+
+function getDefaultResultStatusKey(question) {
+  return `${question.subject}_Q${question.questionNumber}`;
+}
+
+async function saveStudentAnswerForQuestion(result, question, selectedOptionNumbers, skipped, saveButton, messageEl) {
+  const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
+  if (!skipped && selectedNumbers.length === 0) {
+    messageEl.textContent = "Select at least one option or mark skipped.";
+    messageEl.className = "question-detail-save-message text-danger";
+    return;
+  }
+
+  const user = auth.currentUser;
+  if (!user) {
+    messageEl.textContent = "Please sign in again before saving.";
+    messageEl.className = "question-detail-save-message text-danger";
+    return;
+  }
+
+  saveButton.disabled = true;
+  messageEl.textContent = "Saving and recalculating results...";
+  messageEl.className = "question-detail-save-message text-muted";
+
+  try {
+    const teacherSections = await fetchTeacherSections(user.email);
+    const allowedSectionIds = new Set(teacherSections.map((section) => section.id));
+    if (!currentTestData?.sectionId || !allowedSectionIds.has(currentTestData.sectionId)) {
+      throw new Error("You do not have access to update this test.");
+    }
+
+    const resultKey = result.id || result.studentId;
+    const statusKey = findResultStatusKey(result, question) || getDefaultResultStatusKey(question);
+    const nextStatus = buildStudentAnswerStatus(selectedNumbers, question.correctOptions || [], skipped);
+    const nextResults = currentResultsData.map((item) =>
+      (item.id || item.studentId) === resultKey
+        ? { ...item, [statusKey]: nextStatus }
+        : item
+    );
+    const perResultExtraData = new Map([
+      [resultKey, {
+        [statusKey]: nextStatus,
+        answerUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        answerUpdatedBy: user.email || user.uid || "",
+      }],
+    ]);
+
+    await commitBatches(buildResultRecalculationOperations(nextResults, getCurrentScoringRules(), perResultExtraData));
+
+    currentResultsData = nextResults;
+    const subjectId = getSubjectIdFromQuery();
+    if (subjectId) {
+      renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
+    } else {
+      renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+    }
+    document.querySelector(".question-detail-overlay")?.remove();
+  } catch (error) {
+    console.error("Failed to update student answer:", error);
+    saveButton.disabled = false;
+    messageEl.textContent = error.message || "Unable to save student answer.";
+    messageEl.className = "question-detail-save-message text-danger";
+  }
+}
+
+function renderStudentAnswerEditModal({ result, studentName, roll, question, rawStatus }) {
+  const existing = document.querySelector(".question-detail-overlay");
+  if (existing) existing.remove();
+
+  const correctOptionSet = new Set(question.correctOptions || []);
+  const selectedOptionSet = new Set(getStudentOptionNumbersFromStatus(rawStatus, question.correctOptions || []));
+  const isSkipped = isSkippedStatus(rawStatus) || !rawStatus || rawStatus === "-";
+  const optionsHtml = question.options.length
+    ? question.options.map((option, index) => {
+        const optionNumber = index + 1;
+        const checked = selectedOptionSet.has(optionNumber) && !isSkipped ? "checked" : "";
+        const correctBadge = correctOptionSet.has(optionNumber) ? '<span class="badge bg-success ms-1">Correct</span>' : "";
+        return `
+          <label class="question-detail-option-check">
+            <input type="checkbox" class="form-check-input student-answer-option" value="${optionNumber}" ${checked}>
+            <span>Option ${escapeHtml(optionNumber)}</span>
+            <span class="question-detail-option-text">${renderRichText(option)} ${correctBadge}</span>
+          </label>
+        `;
+      }).join("")
+    : '<div class="text-muted">No options available.</div>';
+
+  const overlay = document.createElement("div");
+  overlay.className = "question-detail-overlay";
+  overlay.innerHTML = `
+    <div class="question-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="student-answer-title">
+      <div class="question-detail-header">
+        <div>
+          <h5 class="mb-1" id="student-answer-title">Edit Q${escapeHtml(question.questionNumber)} Answer</h5>
+          <div class="text-muted small">${escapeHtml(studentName)}${roll ? ` | Roll ${escapeHtml(roll)}` : ""}</div>
+        </div>
+        <button type="button" class="question-detail-close" aria-label="Close answer editor">&times;</button>
+      </div>
+      <div class="question-detail-body">
+        <div class="mb-3">
+          <div class="fw-semibold mb-1">Question</div>
+          <div class="question-detail-text">${renderRichText(question.questionText, "Question text not available.")}</div>
+        </div>
+        <div class="question-detail-edit mt-0 pt-0 border-0">
+          <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-2">
+            <div class="fw-semibold">Student Selected Option(s)</div>
+            <span class="badge bg-light text-dark border">Current: ${escapeHtml(rawStatus || "-")}</span>
+          </div>
+          <label class="form-check mb-2">
+            <input type="checkbox" class="form-check-input student-answer-skipped" ${isSkipped ? "checked" : ""}>
+            <span class="form-check-label">Skipped</span>
+          </label>
+          <div class="question-detail-checks">${optionsHtml}</div>
+          <div class="d-flex align-items-center gap-2 flex-wrap mt-3">
+            <button type="button" class="btn btn-sm btn-success question-detail-save">
+              <i class="bi bi-save me-1"></i>Save & Recalculate
+            </button>
+            <span class="question-detail-save-message small text-muted"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelector(".question-detail-close").addEventListener("click", close);
+
+  const skippedInput = overlay.querySelector(".student-answer-skipped");
+  const optionInputs = Array.from(overlay.querySelectorAll(".student-answer-option"));
+  const syncSkippedState = () => {
+    optionInputs.forEach((input) => {
+      input.disabled = skippedInput.checked;
+    });
+  };
+  skippedInput.addEventListener("change", syncSkippedState);
+  optionInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        skippedInput.checked = false;
+        syncSkippedState();
+      }
+    });
+  });
+  syncSkippedState();
+
+  const saveButton = overlay.querySelector(".question-detail-save");
+  const messageEl = overlay.querySelector(".question-detail-save-message");
+  saveButton.addEventListener("click", () => {
+    const selectedOptionNumbers = optionInputs.filter((input) => input.checked).map((input) => input.value);
+    saveStudentAnswerForQuestion(result, question, selectedOptionNumbers, skippedInput.checked, saveButton, messageEl);
+  });
+
+  document.addEventListener("keydown", function onKeydown(event) {
+    if (event.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", onKeydown);
+    }
+  });
+  document.body.appendChild(overlay);
 }
 
 async function fetchTeacherSections(email) {
@@ -1604,11 +1793,21 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
     .join("");
 
   const rowsHtml = sortedRows
-    .map((row) => {
+    .map((row, rowIndex) => {
       const cellsHtml = questions
         .map((question, questionIndex) => {
           const status = row.records[questionIndex]?.rawStatus || "-";
-          return `<td class="subject-status-cell ${getStatusClass(status)}">${escapeHtml(status)}</td>`;
+          return `
+            <td class="subject-status-cell ${getStatusClass(status)}">
+              <button type="button"
+                class="subject-status-edit"
+                data-row-index="${rowIndex}"
+                data-question-index="${questionIndex}"
+                title="Edit ${escapeHtml(row.studentName)} Q${escapeHtml(question.questionNumber)} answer">
+                ${escapeHtml(status)}
+              </button>
+            </td>
+          `;
         })
         .join("");
 
@@ -1662,6 +1861,21 @@ function renderSubjectResults(test, results, students, questionPaper, subjectId)
     };
     button.addEventListener("focus", showDetails);
     button.addEventListener("click", showDetails);
+  });
+
+  contentEl.querySelectorAll(".subject-status-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = sortedRows[Number(button.dataset.rowIndex)];
+      const question = questions[Number(button.dataset.questionIndex)];
+      if (!row || !question) return;
+      renderStudentAnswerEditModal({
+        result: row.result,
+        studentName: row.studentName,
+        roll: row.roll,
+        question,
+        rawStatus: row.records[Number(button.dataset.questionIndex)]?.rawStatus || "-",
+      });
+    });
   });
 }
 
