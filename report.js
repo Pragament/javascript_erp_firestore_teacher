@@ -68,6 +68,10 @@ function setReportHtml(html) {
   reportContentEl.innerHTML = html;
 }
 
+function isRightStatus(status) {
+  return /^r(?:_[a-z0-9]+)?$/i.test(String(status || "").trim());
+}
+
 function setMetaTag(selector, attributeName, value) {
   const element = document.head.querySelector(selector);
   if (!element) return;
@@ -351,7 +355,7 @@ function buildQuestionRecordsForResult(test, result, questionPaper) {
           questions[qNum - 1] = {
             questionNumber: qNum,
             section,
-            isCorrect: result[key] === "R",
+            isCorrect: isRightStatus(result[key]),
           };
         }
       }
@@ -391,7 +395,7 @@ function buildQuestionRecordsForResult(test, result, questionPaper) {
       }
     }
 
-    const isCorrect = question.isCorrect || userAnswer === "R";
+    const isCorrect = question.isCorrect || isRightStatus(userAnswer);
     const status = getQuestionStatus(userAnswer, isCorrect);
 
     records.push({
@@ -2841,7 +2845,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
 
         if (questionNumber) {
           const qNum = parseInt(questionNumber, 10);
-          const isCorrect = result[key] === "R";
+          const isCorrect = isRightStatus(result[key]);
 
           questions[qNum - 1] = {
             questionNumber: qNum,
@@ -2900,7 +2904,7 @@ function renderSingleTestReport(test, result, student, studentId, testId, questi
     const isSkipped = !userAnswer || userAnswer === "" || userAnswer === "S";
 
     total += 1;
-    const isCorrect = question.isCorrect || userAnswer === "R";
+    const isCorrect = question.isCorrect || isRightStatus(userAnswer);
     const status = getQuestionStatus(userAnswer, isCorrect);
     if (isCorrect) correct += 1;
 
@@ -4779,7 +4783,7 @@ async function initProgressCSVExport(studentId, rows, studentName) {
               }
               if (questionNumber) {
                 const qNum = parseInt(questionNumber, 10);
-                const isCorrect = result[key] === "R";
+                const isCorrect = isRightStatus(result[key]);
                 questions[qNum - 1] = {
                   questionNumber: qNum,
                   section,
@@ -4806,7 +4810,7 @@ async function initProgressCSVExport(studentId, rows, studentName) {
             topicStats.set(key, { subject, topic, correct: 0, wrong: 0 });
           }
 
-          const isCorrect = question.isCorrect || userAnswer === "R";
+          const isCorrect = question.isCorrect || isRightStatus(userAnswer);
           const entry = topicStats.get(key);
           if (isCorrect) entry.correct += 1;
           else entry.wrong += 1;

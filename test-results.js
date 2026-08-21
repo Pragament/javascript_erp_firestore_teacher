@@ -61,6 +61,7 @@ const DEFAULT_SCORING_RULES = {
   wrong: -1,
   skipped: 0,
 };
+const OPTION_LETTERS = ["a", "b", "c", "d"];
 const GRADE_SCALE = [
   { min: 91, max: 100, grade: "A1", gradePoint: 10, pass: true },
   { min: 81, max: 90, grade: "A2", gradePoint: 9, pass: true },
@@ -291,6 +292,69 @@ function isRightStatus(status) {
   return /^r(?:_[a-z0-9]+)?$/.test(normalizeComparable(status));
 }
 
+function getOptionLetter(optionNumber) {
+  return OPTION_LETTERS[Number(optionNumber) - 1] || "";
+}
+
+function getOptionNumberFromToken(token) {
+  const normalized = normalizeComparable(token);
+  if (/^[1-4]$/.test(normalized)) return Number(normalized);
+  const letterIndex = OPTION_LETTERS.indexOf(normalized);
+  return letterIndex >= 0 ? letterIndex + 1 : null;
+}
+
+function uniqueSortedOptionNumbers(values) {
+  return [...new Set((values || []).map(getOptionNumberFromToken).filter(Boolean))]
+    .sort((a, b) => a - b);
+}
+
+function getOptionNumbersFromValue(value) {
+  if (Array.isArray(value)) return uniqueSortedOptionNumbers(value);
+  if (value == null || value === "") return [];
+  const normalized = normalizeComparable(value);
+  const tokens = normalized.match(/[a-d]|[1-4]/g) || [];
+  return uniqueSortedOptionNumbers(tokens);
+}
+
+function getOptionLettersFromNumbers(optionNumbers) {
+  return uniqueSortedOptionNumbers(optionNumbers).map(getOptionLetter).filter(Boolean);
+}
+
+function areSameOptionLetters(a, b) {
+  const left = [...new Set(a || [])].sort().join("");
+  const right = [...new Set(b || [])].sort().join("");
+  return left === right;
+}
+
+function buildRightStatus(optionLetters) {
+  const suffix = [...new Set(optionLetters || [])].sort().join("");
+  return suffix ? `r_${suffix}` : "r";
+}
+
+function getSelectedOptionLettersFromStatus(status) {
+  const normalized = normalizeComparable(status);
+  if (!normalized || normalized === "-" || isSkippedStatus(normalized)) return [];
+  const answerPart = normalized.startsWith("r_") || normalized.startsWith("w_")
+    ? normalized.slice(2)
+    : normalized;
+  return getOptionLettersFromNumbers(getOptionNumbersFromValue(answerPart));
+}
+
+function getRecalculatedQuestionStatus(rawStatus, correctOptionNumbers) {
+  if (isSkippedStatus(rawStatus)) return "s";
+
+  const selectedLetters = getSelectedOptionLettersFromStatus(rawStatus);
+  const correctLetters = getOptionLettersFromNumbers(correctOptionNumbers);
+
+  if (selectedLetters.length === 0) {
+    return isRightStatus(rawStatus) ? buildRightStatus(correctLetters) : normalizeComparable(rawStatus);
+  }
+
+  return areSameOptionLetters(selectedLetters, correctLetters)
+    ? buildRightStatus(selectedLetters)
+    : selectedLetters.join("");
+}
+
 function getStatusClass(status) {
   if (!status) return "subject-status-empty";
   if (isRightStatus(status)) return "subject-status-right";
@@ -298,7 +362,7 @@ function getStatusClass(status) {
   return "subject-status-wrong";
 }
 
-function findResultStatus(result, question) {
+function findResultStatusKey(result, question) {
   const questionNumber = question.questionNumber;
   const subject = question.subject;
   const candidateKeys = [];
@@ -315,7 +379,7 @@ function findResultStatus(result, question) {
   candidateKeys.push(`Q${questionNumber}`);
 
   for (const key of candidateKeys) {
-    if (Object.prototype.hasOwnProperty.call(result, key)) return normalizeText(result[key], "-");
+    if (Object.prototype.hasOwnProperty.call(result, key)) return key;
   }
 
   const suffix = `_Q${questionNumber}`;
@@ -324,7 +388,12 @@ function findResultStatus(result, question) {
     const keySubject = key.slice(0, -suffix.length);
     return normalizeComparable(keySubject) === normalizeComparable(subject);
   });
-  return fallbackKey ? normalizeText(result[fallbackKey], "-") : "-";
+  return fallbackKey || "";
+}
+
+function findResultStatus(result, question) {
+  const key = findResultStatusKey(result, question);
+  return key ? normalizeText(result[key], "-") : "-";
 }
 
 function extractOptionText(value) {
@@ -335,31 +404,43 @@ function extractOptionText(value) {
     .trim();
 }
 
-function getCorrectOptionNumber(question) {
-  const explicitOption = parseInt(question?.["Correct Option"], 10);
-  if (Number.isFinite(explicitOption) && explicitOption > 0) return explicitOption;
+function getCorrectOptionNumbers(question) {
+  const explicitOptions = uniqueSortedOptionNumbers([
+    ...getOptionNumbersFromValue(question?.["Correct Option"]),
+    ...getOptionNumbersFromValue(question?.["Correct Options"]),
+  ]);
+  if (explicitOptions.length > 0) return explicitOptions;
 
+  const objectOptions = [];
   for (let optionIndex = 1; optionIndex <= 4; optionIndex += 1) {
     const optionValue = question?.[`Option ${optionIndex}`];
     if (optionValue && typeof optionValue === "object" && optionValue.correct === true) {
-      return optionIndex;
+      objectOptions.push(optionIndex);
     }
   }
+  if (objectOptions.length > 0) return objectOptions;
 
   const answerText = normalizeComparable(question?.Answer || question?.CorrectAnswer || question?.correctAnswer);
-  if (!answerText) return null;
+  if (!answerText) return [];
 
+  const answerOptions = [];
   for (let optionIndex = 1; optionIndex <= 4; optionIndex += 1) {
     const optionText = normalizeComparable(extractOptionText(question?.[`Option ${optionIndex}`]));
-    if (optionText && optionText === answerText) return optionIndex;
+    if (optionText && optionText === answerText) answerOptions.push(optionIndex);
   }
 
-  return null;
+  return answerOptions;
+}
+
+function getCorrectOptionNumber(question) {
+  return getCorrectOptionNumbers(question)[0] || null;
 }
 
 function buildQuestionDetails(question, index) {
   const questionNumber = getQuestionNumber(question, index);
+  const correctOptions = getCorrectOptionNumbers(question);
   return {
+    rawIndex: index,
     questionNumber,
     subject: getQuestionSubject(question),
     chapter: normalizeText(question?.Chapter || question?.chapter),
@@ -369,7 +450,8 @@ function buildQuestionDetails(question, index) {
     options: [1, 2, 3, 4]
       .map((optionIndex) => extractOptionText(question?.[`Option ${optionIndex}`]))
       .filter(Boolean),
-    correctOption: getCorrectOptionNumber(question),
+    correctOption: correctOptions[0] || null,
+    correctOptions,
     explanation: normalizeText(question?.feedbackCorrectAnswer || question?.feedback || question?.explanation || question?.solution),
     raw: question,
   };
@@ -596,6 +678,204 @@ function setTableScoreControlsVisible(visible) {
   tableScoreControlsEl.classList.toggle("d-none", !visible);
 }
 
+function buildUpdatedQuestionRaw(question, selectedOptionNumbers) {
+  const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
+  const selectedLetters = getOptionLettersFromNumbers(selectedNumbers);
+  const selectedTexts = selectedNumbers
+    .map((optionNumber) => extractOptionText(question.raw?.[`Option ${optionNumber}`]))
+    .filter(Boolean);
+  const nextQuestion = { ...(question.raw || {}) };
+
+  nextQuestion["Correct Option"] = selectedNumbers.length === 1 ? selectedNumbers[0] : selectedNumbers.join(",");
+  nextQuestion["Correct Options"] = selectedNumbers;
+  nextQuestion.CorrectAnswer = selectedLetters.join("").toUpperCase();
+  nextQuestion.correctAnswer = selectedLetters.join("");
+  if (selectedTexts.length > 0) nextQuestion.Answer = selectedTexts.join(" | ");
+
+  [1, 2, 3, 4].forEach((optionNumber) => {
+    const key = `Option ${optionNumber}`;
+    const optionValue = nextQuestion[key];
+    if (optionValue && typeof optionValue === "object" && !Array.isArray(optionValue)) {
+      nextQuestion[key] = {
+        ...optionValue,
+        correct: selectedNumbers.includes(optionNumber),
+      };
+    }
+  });
+
+  return nextQuestion;
+}
+
+function getSubjectStatsForResult(result, scoringRules) {
+  const subjects = getSubjectColumns(currentTestData, currentQuestionPaperData, [result]);
+  return subjects.map((subject) => ({
+    subject,
+    ...calculatePerformanceMetrics(getQuestionRecordsForResult(result, subject), scoringRules),
+  }));
+}
+
+function buildResultSummaryUpdates(result, metrics, rank, totalStudents, scoringRules) {
+  const percent = Math.round(metrics.marks);
+  const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
+  return {
+    correct: metrics.correct,
+    wrong: metrics.wrong,
+    skipped: metrics.skipped,
+    total: metrics.total,
+    percent,
+    marks: metrics.marks,
+    earnedMarks: metrics.earnedMarks,
+    maxMarks: metrics.maxMarks,
+    grade: metrics.grade,
+    gradePoint: metrics.gradePoint,
+    gpa: metrics.gradePoint,
+    passed: metrics.passed,
+    rank,
+    percentile,
+    scoringRules,
+    subjectStats: getSubjectStatsForResult(result, scoringRules),
+    recalculatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+async function commitBatches(operations) {
+  const chunkSize = 450;
+  for (let index = 0; index < operations.length; index += chunkSize) {
+    const batch = firestore.batch();
+    operations.slice(index, index + chunkSize).forEach(({ ref, data }) => {
+      batch.update(ref, data);
+    });
+    await batch.commit();
+  }
+}
+
+async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl) {
+  const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
+  if (selectedNumbers.length === 0) {
+    messageEl.textContent = "Select at least one correct option.";
+    messageEl.className = "question-detail-save-message text-danger";
+    return;
+  }
+
+  const user = auth.currentUser;
+  if (!user) {
+    messageEl.textContent = "Please sign in again before saving.";
+    messageEl.className = "question-detail-save-message text-danger";
+    return;
+  }
+
+  saveButton.disabled = true;
+  messageEl.textContent = "Saving and recalculating results...";
+  messageEl.className = "question-detail-save-message text-muted";
+
+  try {
+    const teacherSections = await fetchTeacherSections(user.email);
+    const allowedSectionIds = new Set(teacherSections.map((section) => section.id));
+    if (!currentTestData?.sectionId || !allowedSectionIds.has(currentTestData.sectionId)) {
+      throw new Error("You do not have access to update this test.");
+    }
+
+    const updatedQuestionRaw = buildUpdatedQuestionRaw(question, selectedNumbers);
+    let nextQuestions = null;
+    const operations = [];
+
+    if (currentQuestionPaperData?.id && Array.isArray(currentQuestionPaperData.questions)) {
+      nextQuestions = currentQuestionPaperData.questions.map((item, index) =>
+        index === question.rawIndex ? updatedQuestionRaw : item
+      );
+      operations.push({
+        ref: firestore.collection("questionpapers").doc(currentQuestionPaperData.id),
+        data: {
+          questions: nextQuestions,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: user.email || user.uid || "",
+        },
+      });
+      currentQuestionPaperData = {
+        ...currentQuestionPaperData,
+        questions: nextQuestions,
+      };
+    } else if (currentTestData?.id && Array.isArray(currentTestData.questions)) {
+      nextQuestions = currentTestData.questions.map((item, index) =>
+        index === question.rawIndex ? updatedQuestionRaw : item
+      );
+      operations.push({
+        ref: firestore.collection("tests").doc(currentTestData.id),
+        data: {
+          questions: nextQuestions,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: user.email || user.uid || "",
+        },
+      });
+      currentTestData = {
+        ...currentTestData,
+        questions: nextQuestions,
+      };
+    } else {
+      throw new Error("Question paper data is not available for this test.");
+    }
+
+    const correctLetters = getOptionLettersFromNumbers(selectedNumbers);
+    const nextResults = currentResultsData.map((result) => {
+      const nextResult = { ...result };
+      const statusKey = findResultStatusKey(nextResult, question);
+      if (statusKey) {
+        nextResult[statusKey] = getRecalculatedQuestionStatus(nextResult[statusKey], selectedNumbers);
+      }
+      return nextResult;
+    });
+
+    const scoringRules = getCurrentScoringRules();
+    const rankedRows = nextResults
+      .map((result) => ({
+        result,
+        metrics: calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules),
+      }))
+      .sort((a, b) => {
+        if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
+        return b.metrics.marks - a.metrics.marks;
+      });
+    const rankByResultId = new Map(rankedRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
+
+    nextResults.forEach((result) => {
+      if (!result.id) return;
+      const statusKey = findResultStatusKey(result, question);
+      const metrics = calculatePerformanceMetrics(getQuestionRecordsForResult(result), scoringRules);
+      const data = buildResultSummaryUpdates(
+        result,
+        metrics,
+        rankByResultId.get(result.id || result.studentId) || 0,
+        nextResults.length,
+        scoringRules
+      );
+      if (statusKey) data[statusKey] = result[statusKey];
+      operations.push({
+        ref: firestore.collection("results").doc(result.id),
+        data,
+      });
+    });
+
+    await commitBatches(operations);
+
+    currentResultsData = nextResults;
+    messageEl.textContent = `Saved correct option${selectedNumbers.length === 1 ? "" : "s"} ${correctLetters.join("").toUpperCase()}.`;
+    messageEl.className = "question-detail-save-message text-success";
+
+    const subjectId = getSubjectIdFromQuery();
+    if (subjectId) {
+      renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
+    } else {
+      renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+    }
+    document.querySelector(".question-detail-overlay")?.remove();
+  } catch (error) {
+    console.error("Failed to update correct options:", error);
+    saveButton.disabled = false;
+    messageEl.textContent = error.message || "Unable to save correct options.";
+    messageEl.className = "question-detail-save-message text-danger";
+  }
+}
+
 async function fetchTeacherSections(email) {
   const snapshot = await firestore
     .collection("teacherAssignments")
@@ -768,14 +1048,33 @@ function renderQuestionDetailModal(question) {
   const existing = document.querySelector(".question-detail-overlay");
   if (existing) existing.remove();
 
-  const correctOptionText = question.correctOption ? question.options[question.correctOption - 1] : "";
-  const correctAnswerHtml = question.correctOption
-    ? `Option ${escapeHtml(question.correctOption)}${correctOptionText ? `: <span class="question-detail-inline">${renderRichText(correctOptionText)}</span>` : ""}`
+  const correctOptions = question.correctOptions?.length ? question.correctOptions : (question.correctOption ? [question.correctOption] : []);
+  const correctAnswerHtml = correctOptions.length
+    ? correctOptions
+        .map((optionNumber) => {
+          const correctOptionText = question.options[optionNumber - 1] || "";
+          return `Option ${escapeHtml(optionNumber)}${correctOptionText ? `: <span class="question-detail-inline">${renderRichText(correctOptionText)}</span>` : ""}`;
+        })
+        .join("<br>")
     : "Not available";
 
   const optionsHtml = question.options.length
     ? `<ol class="mb-0 question-detail-options">${question.options.map((option) => `<li>${renderRichText(option)}</li>`).join("")}</ol>`
     : '<div class="text-muted">No options available.</div>';
+  const correctOptionSet = new Set(correctOptions);
+  const editOptionsHtml = question.options.length
+    ? question.options.map((option, index) => {
+        const optionNumber = index + 1;
+        const checked = correctOptionSet.has(optionNumber) ? "checked" : "";
+        return `
+          <label class="question-detail-option-check">
+            <input type="checkbox" class="form-check-input" value="${optionNumber}" ${checked}>
+            <span>Option ${escapeHtml(optionNumber)}</span>
+            <span class="question-detail-option-text">${renderRichText(option)}</span>
+          </label>
+        `;
+      }).join("")
+    : '<div class="text-muted">Add options before choosing a correct answer.</div>';
 
   const overlay = document.createElement("div");
   overlay.className = "question-detail-overlay";
@@ -806,6 +1105,16 @@ function renderQuestionDetailModal(question) {
           <div class="fw-semibold mb-1">Correct Answer</div>
           <div>${correctAnswerHtml}</div>
         </div>
+        <div class="question-detail-edit no-print">
+          <div class="fw-semibold mb-2">Edit Correct Option</div>
+          <div class="question-detail-checks">${editOptionsHtml}</div>
+          <div class="d-flex align-items-center gap-2 flex-wrap mt-3">
+            <button type="button" class="btn btn-sm btn-success question-detail-save" ${question.options.length ? "" : "disabled"}>
+              <i class="bi bi-save me-1"></i>Save & Recalculate
+            </button>
+            <span class="question-detail-save-message small text-muted"></span>
+          </div>
+        </div>
         ${question.explanation ? `
           <div>
             <div class="fw-semibold mb-1">Explanation</div>
@@ -821,6 +1130,13 @@ function renderQuestionDetailModal(question) {
     if (event.target === overlay) close();
   });
   overlay.querySelector(".question-detail-close").addEventListener("click", close);
+  const saveButton = overlay.querySelector(".question-detail-save");
+  const messageEl = overlay.querySelector(".question-detail-save-message");
+  saveButton?.addEventListener("click", () => {
+    const selectedOptionNumbers = Array.from(overlay.querySelectorAll(".question-detail-checks input:checked"))
+      .map((input) => input.value);
+    saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl);
+  });
   document.addEventListener("keydown", function onKeydown(event) {
     if (event.key === "Escape") {
       close();

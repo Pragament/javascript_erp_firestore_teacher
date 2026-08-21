@@ -6,7 +6,7 @@ function calculateScoreDetails(result) {
     for (let key in result) {
         if (key.includes('_Q')) {
             total++;
-            if (result[key] === 'R') {
+            if (/^r(?:_[a-z0-9]+)?$/i.test(String(result[key] || '').trim())) {
                 correct++;
             }
         }

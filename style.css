@@ -117,6 +117,13 @@
 .question-detail-text{white-space:pre-wrap;line-height:1.55}
 .question-detail-text p,.question-detail-options p,.question-detail-inline p{margin-bottom:.35rem}
 .question-detail-text p:last-child,.question-detail-options p:last-child,.question-detail-inline p:last-child{margin-bottom:0}
+.question-detail-edit{border-top:1px solid #e1e8ed;margin-top:1rem;padding-top:1rem}
+.question-detail-checks{display:grid;gap:.5rem}
+.question-detail-option-check{display:grid;grid-template-columns:22px 76px 1fr;gap:.5rem;align-items:flex-start;border:1px solid #e9ecef;border-radius:8px;padding:.65rem .75rem;margin:0;cursor:pointer}
+.question-detail-option-check:hover{background:#f8f9fa}
+.question-detail-option-text{min-width:0}
+.question-detail-save-message{min-height:1.2rem}
+@media (max-width:575.98px){.question-detail-option-check{grid-template-columns:22px 1fr}.question-detail-option-text{grid-column:2}}
 
 /* Calendar Styles */
 .calendar-view{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;min-height:400px}
