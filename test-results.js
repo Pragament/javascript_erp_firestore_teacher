@@ -479,7 +479,7 @@ function getSubjectQuestions(test, questionPaper, subjectId) {
 
   return questions
     .map(buildQuestionDetails)
-    .filter((question) => normalizeComparable(question.subject) === selectedSubject)
+    .filter((question) => !selectedSubject || normalizeComparable(question.subject) === selectedSubject)
     .sort((a, b) => a.questionNumber - b.questionNumber);
 }
 
@@ -1308,7 +1308,7 @@ async function loadTestResults(testId) {
     if (subjectId) {
       renderSubjectResults(test, results, students, questionPaper, subjectId);
     } else {
-      renderStudentResults(test, results, students, sortSelectEl.value);
+      renderAllSubjectsResults(test, results, students, questionPaper, sortSelectEl.value);
     }
   } catch (error) {
     console.error("Failed to load test results:", error);
@@ -1718,8 +1718,13 @@ function bindSubjectSortButtons() {
         questionIndex: key === "question" ? Number(questionIndex) : null,
       };
 
-      if (currentTestData && currentResultsData.length > 0 && getSubjectIdFromQuery()) {
-        renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, getSubjectIdFromQuery());
+      if (currentTestData && currentResultsData.length > 0) {
+        const subjectId = getSubjectIdFromQuery();
+        if (subjectId) {
+          renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
+        } else {
+          renderAllSubjectsResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, sortSelectEl?.value || "score-desc");
+        }
       }
     });
   });
@@ -1792,7 +1797,7 @@ function bindStudentSortButtons() {
       };
 
       if (currentTestData && currentResultsData.length > 0 && !getSubjectIdFromQuery()) {
-        renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+        renderAllSubjectsResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, sortSelectEl?.value || "score-desc");
       }
     });
   });
@@ -1812,6 +1817,142 @@ function bindRenderedExportButton() {
   contentEl.querySelectorAll(".results-export-btn").forEach((button) => {
     button.addEventListener("click", exportCurrentResultsTable);
   });
+}
+
+function appendAllQuestionsTable(test, results, students, questionPaper) {
+  const questions = getSubjectQuestions(test, questionPaper, "");
+  if (questions.length === 0) return;
+
+  const studentById = getStudentByIdMap(students);
+  const scoringRules = getCurrentScoringRules();
+  const rankRows = [...results]
+    .map((result) => ({
+      result,
+      metrics: calculatePerformanceMetrics(getSubjectQuestionRecordsForResult(result, questions), scoringRules),
+    }))
+    .sort((a, b) => {
+      if (b.metrics.earnedMarks !== a.metrics.earnedMarks) return b.metrics.earnedMarks - a.metrics.earnedMarks;
+      return b.metrics.marks - a.metrics.marks;
+    });
+  const rankByResultId = new Map(rankRows.map((row, index) => [row.result.id || row.result.studentId, index + 1]));
+  const subjectRows = results.map((result) => {
+    const student = getResultStudent(result, studentById);
+    const records = getSubjectQuestionRecordsForResult(result, questions);
+    const metrics = calculatePerformanceMetrics(records, scoringRules);
+    return {
+      result,
+      student,
+      studentName: student?.name || result.name || "Unknown",
+      roll: getRollNumber(student, result),
+      records,
+      metrics,
+      rank: rankByResultId.get(result.id || result.studentId) || 0,
+    };
+  });
+  const sortedRows = sortSubjectResultRows(subjectRows);
+  const headerHtml = questions
+    .map((question, index) => `
+      <th>
+        <button type="button" class="subject-sort-header" data-subject-sort-key="question" data-question-index="${index}" title="Sort by question ${escapeHtml(question.questionNumber)}">
+          Q${escapeHtml(question.questionNumber)}${getSubjectSortIndicator("question", index)}
+        </button>
+        <button type="button" class="subject-question-info" data-question-index="${index}" title="View question details">
+          <i class="bi bi-info-circle"></i>
+        </button>
+      </th>
+    `)
+    .join("");
+  const rowsHtml = sortedRows
+    .map((row, rowIndex) => {
+      const cellsHtml = questions
+        .map((question, questionIndex) => {
+          const status = row.records[questionIndex]?.rawStatus || "-";
+          return `
+            <td class="subject-status-cell ${getStatusClass(status)}">
+              <button type="button"
+                class="subject-status-edit"
+                data-row-index="${rowIndex}"
+                data-question-index="${questionIndex}"
+                title="Edit ${escapeHtml(row.studentName)} Q${escapeHtml(question.questionNumber)} answer">
+                ${escapeHtml(status)}
+              </button>
+            </td>
+          `;
+        })
+        .join("");
+
+      return `
+        <tr>
+          <td>${escapeHtml(row.studentName)}</td>
+          <td>${escapeHtml(row.roll)}</td>
+          ${cellsHtml}
+          <td class="subject-total-cell">${row.metrics.correct}</td>
+          <td class="subject-total-cell">${row.metrics.wrong}</td>
+          <td class="subject-total-cell">${row.metrics.skipped}</td>
+          <td class="subject-total-cell" title="${row.metrics.correct} correct, ${row.metrics.wrong} wrong, ${row.metrics.skipped} skipped">${formatMarksValue(row.metrics.earnedMarks)}</td>
+          <td class="subject-total-cell">${row.rank}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  contentEl.insertAdjacentHTML("beforeend", `
+    <div class="mt-4">
+      <h5 class="fw-bold mb-3">All Questions</h5>
+      <div class="subject-results-wrap">
+        <div class="subject-results-scroll">
+          <table class="subject-results-table">
+            <thead>
+              <tr>
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="name">Student${getSubjectSortIndicator("name")}</button></th>
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="roll">Roll${getSubjectSortIndicator("roll")}</button></th>
+                ${headerHtml}
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="correct">Total R${getSubjectSortIndicator("correct")}</button></th>
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="wrong">Total W${getSubjectSortIndicator("wrong")}</button></th>
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="skipped">Total S${getSubjectSortIndicator("skipped")}</button></th>
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="marks">Marks${getSubjectSortIndicator("marks")}</button></th>
+                <th><button type="button" class="subject-sort-header" data-subject-sort-key="rank">Rank${getSubjectSortIndicator("rank")}</button></th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `);
+
+  bindSubjectSortButtons();
+  contentEl.querySelectorAll(".subject-question-info").forEach((button) => {
+    const showDetails = () => {
+      const question = questions[Number(button.dataset.questionIndex)];
+      if (question) renderQuestionDetailModal(question);
+    };
+    button.addEventListener("focus", showDetails);
+    button.addEventListener("click", showDetails);
+  });
+
+  contentEl.querySelectorAll(".subject-status-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = sortedRows[Number(button.dataset.rowIndex)];
+      const question = questions[Number(button.dataset.questionIndex)];
+      if (!row || !question) return;
+      renderStudentAnswerEditModal({
+        result: row.result,
+        studentName: row.studentName,
+        roll: row.roll,
+        question,
+        rawStatus: row.records[Number(button.dataset.questionIndex)]?.rawStatus || "-",
+      });
+    });
+  });
+}
+
+function renderAllSubjectsResults(test, results, students, questionPaper, sortOption = "score-desc") {
+  currentResultsView = "table";
+  renderStudentResults(test, results, students, sortOption);
+  if (currentResultsView !== "table") return;
+  appendAllQuestionsTable(test, results, students, questionPaper);
+  subtitleEl.textContent = `${test.testName || "Test"} | All Subjects | ${results.length} student result${results.length === 1 ? "" : "s"}`;
 }
 
 function renderSubjectResults(test, results, students, questionPaper, subjectId) {
@@ -2303,7 +2444,7 @@ async function initializePage() {
           currentResultsView = button.dataset.resultsView || "table";
           setResultsViewToggleVisible(!getSubjectIdFromQuery());
           if (currentTestData && currentResultsData.length > 0 && !getSubjectIdFromQuery()) {
-            renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+            renderAllSubjectsResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, sortSelectEl?.value || "score-desc");
           }
         });
       });
@@ -2317,7 +2458,7 @@ async function initializePage() {
         if (currentTestData && currentResultsData.length > 0 && subjectId) {
           renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
         } else if (currentTestData && currentResultsData.length > 0 && currentResultsView === "table") {
-          renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+          renderAllSubjectsResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, sortSelectEl?.value || "score-desc");
         }
       });
     });
@@ -2330,7 +2471,7 @@ async function initializePage() {
           if (subjectId) {
             renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
           } else {
-            renderStudentResults(currentTestData, currentResultsData, currentStudentsData, e.target.value);
+            renderAllSubjectsResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, e.target.value);
           }
         }
       };
@@ -2350,7 +2491,7 @@ async function initializePage() {
           if (nextSubjectId) {
             renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, nextSubjectId);
           } else {
-            renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "name-asc");
+            renderAllSubjectsResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, sortSelectEl?.value || "name-asc");
           }
         }
       };

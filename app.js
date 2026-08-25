@@ -788,11 +788,21 @@ function getStudentRollValue(student, result = {}) {
     return String(student?.rollNo || student?.rollNumber || student?.roll || student?.admissionNo || result.rollNo || result.rollNumber || result.roll || '').trim();
 }
 
+function getCanonicalRollKey(value) {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) return '';
+    if (/^\d+$/.test(trimmed)) {
+        return String(Number(trimmed));
+    }
+    return trimmed.toLowerCase().replace(/^0+(?=[a-z0-9])/i, '');
+}
+
 function buildRollStudentLookup(students) {
     const lookup = new Map();
     students.forEach((student) => {
         const roll = getStudentRollValue(student);
-        if (roll) lookup.set(roll, student);
+        const canonicalRoll = getCanonicalRollKey(roll);
+        if (canonicalRoll) lookup.set(canonicalRoll, student);
     });
     return lookup;
 }
@@ -975,7 +985,7 @@ async function prepareStudentBubblesImport(testId, file) {
         rows.slice(1).forEach((row) => {
             const roll = String(row[rollIndex] || '').trim();
             if (!roll) return;
-            const student = rollLookup.get(roll);
+            const student = rollLookup.get(getCanonicalRollKey(roll));
             if (!student) {
                 unmatchedRolls.push(roll);
                 return;
