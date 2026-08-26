@@ -112,7 +112,9 @@ const elements = {
     bubbleImportPreviewModal: document.getElementById('bubbleImportPreviewModal'),
     bubbleImportSummary: document.getElementById('bubble-import-summary'),
     bubbleImportUnmatched: document.getElementById('bubble-import-unmatched'),
+    bubbleImportAbsentees: document.getElementById('bubble-import-absentees'),
     bubbleImportPreviewBody: document.getElementById('bubble-import-preview-body'),
+    bubbleImportAbsenteeBody: document.getElementById('bubble-import-absentee-body'),
     bubbleImportPreviewNote: document.getElementById('bubble-import-preview-note'),
     confirmBubbleImportBtn: document.getElementById('confirm-bubble-import-btn')
 };
@@ -131,6 +133,8 @@ let selectedPSEDIndicators = [];
 let currentEditingTest = null;
 let questionPaperOptions = [];
 let pendingBubbleImport = null;
+let bubbleImportPreviewSort = { key: 'previewRank', direction: 'asc' };
+let bubbleImportAbsenteeSort = { key: 'roll', direction: 'asc' };
 
 // Teacher identifier for timetable matching
 let currentTeacherIdentifier = null;
@@ -893,12 +897,88 @@ async function readFileAsText(file) {
     });
 }
 
+function getBubbleImportSortValue(row, key) {
+    if (key === 'rollNo') {
+        const rollKey = getCanonicalRollKey(row.rollNo);
+        return /^\d+$/.test(rollKey) ? Number(rollKey) : rollKey;
+    }
+    if (['correct', 'wrong', 'skipped', 'total', 'earnedMarks', 'percent', 'previewRank'].includes(key)) {
+        return Number(row[key]) || 0;
+    }
+    return String(row[key] || '').toLowerCase();
+}
+
+function sortBubbleImportRows(rows, sortState) {
+    const direction = sortState.direction === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+        const valueA = getBubbleImportSortValue(a, sortState.key);
+        const valueB = getBubbleImportSortValue(b, sortState.key);
+        if (typeof valueA === 'number' && typeof valueB === 'number') {
+            if (valueA !== valueB) return (valueA - valueB) * direction;
+        } else {
+            const compare = String(valueA).localeCompare(String(valueB), undefined, { numeric: true, sensitivity: 'base' });
+            if (compare !== 0) return compare * direction;
+        }
+        return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+    });
+}
+
+function getAbsenteeSortValue(student, key) {
+    if (key === 'roll') {
+        const rollKey = getCanonicalRollKey(student.roll);
+        return /^\d+$/.test(rollKey) ? Number(rollKey) : rollKey;
+    }
+    return String(student[key] || '').toLowerCase();
+}
+
+function sortBubbleImportAbsentees(absentees) {
+    const direction = bubbleImportAbsenteeSort.direction === 'asc' ? 1 : -1;
+    return [...absentees].sort((a, b) => {
+        const valueA = getAbsenteeSortValue(a, bubbleImportAbsenteeSort.key);
+        const valueB = getAbsenteeSortValue(b, bubbleImportAbsenteeSort.key);
+        if (typeof valueA === 'number' && typeof valueB === 'number') {
+            if (valueA !== valueB) return (valueA - valueB) * direction;
+        } else {
+            const compare = String(valueA).localeCompare(String(valueB), undefined, { numeric: true, sensitivity: 'base' });
+            if (compare !== 0) return compare * direction;
+        }
+        return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+    });
+}
+
+function bindBubbleImportPreviewSortButtons() {
+    document.querySelectorAll('.bubble-import-sort').forEach((button) => {
+        button.addEventListener('click', () => {
+            const key = button.dataset.sortKey || 'previewRank';
+            bubbleImportPreviewSort = {
+                key,
+                direction: bubbleImportPreviewSort.key === key && bubbleImportPreviewSort.direction === 'asc' ? 'desc' : 'asc',
+            };
+            if (pendingBubbleImport) showBubbleImportPreview(pendingBubbleImport);
+        });
+    });
+
+    document.querySelectorAll('.bubble-absentee-sort').forEach((button) => {
+        button.addEventListener('click', () => {
+            const key = button.dataset.sortKey || 'roll';
+            bubbleImportAbsenteeSort = {
+                key,
+                direction: bubbleImportAbsenteeSort.key === key && bubbleImportAbsenteeSort.direction === 'asc' ? 'desc' : 'asc',
+            };
+            if (pendingBubbleImport) showBubbleImportPreview(pendingBubbleImport);
+        });
+    });
+}
+
 function showBubbleImportPreview(importData) {
     pendingBubbleImport = importData;
-    const previewRows = importData.importedResults.slice(0, 25);
+    const sortedImportedRows = sortBubbleImportRows(importData.importedResults, bubbleImportPreviewSort);
+    const previewRows = sortedImportedRows.slice(0, 25);
+    const absentees = sortBubbleImportAbsentees(importData.absentees || []);
     elements.bubbleImportSummary.innerHTML = `
         <strong>${escapeHtml(importData.test.testName || 'Test')}</strong><br>
         ${importData.importedResults.length} matched student row${importData.importedResults.length === 1 ? '' : 's'},
+        ${absentees.length} absentee${absentees.length === 1 ? '' : 's'},
         ${importData.questionColumns.length} question column${importData.questionColumns.length === 1 ? '' : 's'}.
         Firestore will be updated only after confirmation.
     `;
@@ -926,8 +1006,22 @@ function showBubbleImportPreview(importData) {
     elements.bubbleImportPreviewNote.textContent = importData.importedResults.length > previewRows.length
         ? `Showing first ${previewRows.length} rows. Confirm will import all ${importData.importedResults.length} matched rows.`
         : '';
+    if (absentees.length) {
+        elements.bubbleImportAbsentees.classList.remove('d-none');
+        elements.bubbleImportAbsenteeBody.innerHTML = absentees.map((student) => `
+            <tr>
+                <td>${escapeHtml(student.roll || '')}</td>
+                <td>${escapeHtml(student.name || '')}</td>
+                <td>${escapeHtml(student.studentId || student.id || '')}</td>
+            </tr>
+        `).join('');
+    } else {
+        elements.bubbleImportAbsentees.classList.add('d-none');
+        elements.bubbleImportAbsenteeBody.innerHTML = '';
+    }
     elements.confirmBubbleImportBtn.disabled = false;
-    new bootstrap.Modal(elements.bubbleImportPreviewModal).show();
+    bindBubbleImportPreviewSortButtons();
+    bootstrap.Modal.getOrCreateInstance(elements.bubbleImportPreviewModal).show();
 }
 
 async function prepareStudentBubblesImport(testId, file) {
@@ -979,13 +1073,16 @@ async function prepareStudentBubblesImport(testId, file) {
         const existingResults = existingResultsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
         const existingByStudentId = new Map(existingResults.map((result) => [result.studentId || result.id, result]));
         const importedStudentIds = new Set();
+        const uploadedRollKeys = new Set();
         const unmatchedRolls = [];
         const importedResults = [];
 
         rows.slice(1).forEach((row) => {
             const roll = String(row[rollIndex] || '').trim();
             if (!roll) return;
-            const student = rollLookup.get(getCanonicalRollKey(roll));
+            const rollKey = getCanonicalRollKey(roll);
+            if (rollKey) uploadedRollKeys.add(rollKey);
+            const student = rollLookup.get(rollKey);
             if (!student) {
                 unmatchedRolls.push(roll);
                 return;
@@ -1018,6 +1115,14 @@ async function prepareStudentBubblesImport(testId, file) {
             importedStudentIds.add(studentId);
             importedResults.push(nextResult);
         });
+        const absentees = students
+            .map((student) => ({
+                id: student.id,
+                studentId: student.studentId || student.id || '',
+                name: student.name || '',
+                roll: getStudentRollValue(student),
+            }))
+            .filter((student) => !uploadedRollKeys.has(getCanonicalRollKey(student.roll)));
 
         if (importedResults.length === 0) {
             throw new Error(unmatchedRolls.length ? 'No CSV rolls matched students in this section.' : 'No student rows found to import.');
@@ -1048,6 +1153,7 @@ async function prepareStudentBubblesImport(testId, file) {
             existingResults,
             rankByStudentId,
             unmatchedRolls,
+            absentees,
             questionColumns,
             fileName: file.name || '',
         });
@@ -1096,6 +1202,7 @@ async function confirmStudentBubblesImport() {
             sectionId: importData.test.sectionId || '',
             importedRows: importData.importedResults.length,
             unmatchedRolls: importData.unmatchedRolls,
+            absentees: importData.absentees || [],
             questionCount: importData.questionColumns.length,
             fileName: importData.fileName || '',
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),

@@ -356,21 +356,36 @@
                         <table class="table table-sm table-striped align-middle">
                             <thead>
                                 <tr>
-                                    <th>Roll</th>
-                                    <th>Student</th>
-                                    <th>Correct</th>
-                                    <th>Wrong</th>
-                                    <th>Skipped</th>
-                                    <th>Total</th>
-                                    <th>Marks</th>
-                                    <th>Percent</th>
-                                    <th>Rank</th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="rollNo">Roll</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="name">Student</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="correct">Correct</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="wrong">Wrong</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="skipped">Skipped</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="total">Total</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="earnedMarks">Marks</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="percent">Percent</button></th>
+                                    <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="previewRank">Rank</button></th>
                                 </tr>
                             </thead>
                             <tbody id="bubble-import-preview-body"></tbody>
                         </table>
                     </div>
                     <div id="bubble-import-preview-note" class="small text-muted"></div>
+                    <div id="bubble-import-absentees" class="mt-4 d-none">
+                        <h6 class="fw-bold mb-2">Absentees</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped align-middle">
+                                <thead>
+                                    <tr>
+                                        <th><button type="button" class="table-sort-header bubble-absentee-sort" data-sort-key="roll">Roll</button></th>
+                                        <th><button type="button" class="table-sort-header bubble-absentee-sort" data-sort-key="name">Student</button></th>
+                                        <th><button type="button" class="table-sort-header bubble-absentee-sort" data-sort-key="studentId">Student ID</button></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bubble-import-absentee-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>

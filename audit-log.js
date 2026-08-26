@@ -171,7 +171,7 @@ function getChangeSummary(log) {
     return (log.changedFields || []).join(", ") || "Test updated";
   }
   if (log.actionType === "student_bubbles_import") {
-    return `${log.importedRows || 0} rows, ${log.questionCount || 0} questions`;
+    return `${log.importedRows || 0} rows, ${(log.absentees || []).length} absent, ${log.questionCount || 0} questions`;
   }
   return "-";
 }
@@ -194,7 +194,8 @@ function getDetailText(log) {
   }
   if (log.actionType === "student_bubbles_import") {
     const unmatched = (log.unmatchedRolls || []).length ? ` Unmatched rolls: ${log.unmatchedRolls.join(", ")}.` : "";
-    return `Imported ${log.importedRows || 0} student row(s) from ${log.fileName || "CSV"} for ${log.questionCount || 0} question(s).${unmatched}`;
+    const absent = (log.absentees || []).length ? ` Absentees: ${log.absentees.map((student) => student.roll || student.name || student.studentId).join(", ")}.` : "";
+    return `Imported ${log.importedRows || 0} student row(s) from ${log.fileName || "CSV"} for ${log.questionCount || 0} question(s).${unmatched}${absent}`;
   }
   return "";
 }
