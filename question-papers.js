@@ -161,7 +161,7 @@ function getSafeFilenamePart(value, fallback = "question-paper") {
 
 function setImportMessage(message, type = "muted") {
   if (!importMessageEl) return;
-  importMessageEl.textContent = message;
+  importMessageEl.innerHTML = String(message || "");
   importMessageEl.className = `small mb-3 text-${type}`;
 }
 
@@ -237,13 +237,14 @@ function getCSVRecords(text) {
     throw new Error(`Missing required column(s): ${missingColumns.join(", ")}`);
   }
 
-  return rows.slice(1).map((row) => {
+  return rows.slice(1).map((row, rowIndex) => {
     const record = {};
     headers.forEach((header, index) => {
       record[header] = normalizeText(row[index]);
     });
+    record.__csvRowNumber = rowIndex + 2;
     return record;
-  }).filter((record) => normalizeText(record.question));
+  }).filter((record) => Object.keys(record).some((key) => !key.startsWith("__") && normalizeText(record[key])));
 }
 
 function getCorrectOptionNumbersFromImport(value) {
@@ -287,6 +288,7 @@ function buildQuestionFromImportRecord(record, index) {
     feedbackCorrectAnswer: record.correct_answer_logic,
     feedback: record.correct_answer_logic,
     explanation: record.correct_answer_logic,
+    sourceCsvRowNumber: record.__csvRowNumber,
   };
 }
 
@@ -297,14 +299,27 @@ function validateImportedQuestions(questions) {
 
   const invalidRows = questions
     .map((question, index) => ({ question, index }))
-    .filter(({ question }) => {
+    .map(({ question, index }) => {
       const hasOptions = [1, 2, 3, 4].some((optionNumber) => normalizeText(question[`Option ${optionNumber}`]));
-      return !normalizeText(question.Question) || !hasOptions || getCorrectOptionNumbers(question).length === 0;
+      const reasons = [];
+      if (!normalizeText(question.Question)) reasons.push("missing question");
+      if (!hasOptions) reasons.push("missing option1-option4");
+      if (getCorrectOptionNumbers(question).length === 0) reasons.push("missing/invalid correct_option");
+      return {
+        rowNumber: question.sourceCsvRowNumber || index + 2,
+        reasons,
+        preview: plainTextFromRichHtml(question.Question || question.Answer || "").slice(0, 90),
+      };
     })
-    .map(({ index }) => index + 1);
+    .filter((row) => row.reasons.length > 0);
 
   if (invalidRows.length > 0) {
-    throw new Error(`Question row(s) need question text, at least one option, and correct_option: ${invalidRows.join(", ")}`);
+    const details = invalidRows.slice(0, 8).map((row) => {
+      const preview = row.preview ? ` (${escapeHtml(row.preview)})` : "";
+      return `CSV row ${row.rowNumber}: ${escapeHtml(row.reasons.join(", "))}${preview}`;
+    });
+    const remaining = invalidRows.length > 8 ? `<br>...and ${invalidRows.length - 8} more row(s).` : "";
+    throw new Error(`Fix these rows before preview:<br>${details.join("<br>")}${remaining}`);
   }
 }
 
