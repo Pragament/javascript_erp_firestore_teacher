@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Question Paper Details</title>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-5HCH2EN3HZ"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-5HCH2EN3HZ');
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body style="background:#f8f9fa">
+    <div class="report-page question-paper-detail-page">
+        <div class="card shadow-sm mb-4">
+            <div class="card-body d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                <div>
+                    <h4 class="mb-1"><i class="bi bi-list-check me-2"></i>Question Paper Details</h4>
+                    <p id="question-paper-detail-subtitle" class="text-muted mb-0">Loading questions...</p>
+                </div>
+                <div class="d-flex flex-column flex-sm-row gap-2">
+                    <a href="question-papers.html" class="btn btn-outline-secondary">
+                        <i class="bi bi-journal-text me-1"></i> Question Papers
+                    </a>
+                    <a href="index.html" class="btn" style="background:#2c3e50;color:white;border:none">
+                        <i class="bi bi-arrow-left me-1"></i> Dashboard
+                    </a>
+                </div>
+            </div>
+            <div class="border-top px-3 py-3">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-8">
+                        <label for="question-detail-search" class="form-label small text-muted mb-1">Search Questions</label>
+                        <input id="question-detail-search" class="form-control form-control-sm" type="search" placeholder="Question, option, subject, chapter, topic...">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="question-detail-subject" class="form-label small text-muted mb-1">Subject</label>
+                        <select id="question-detail-subject" class="form-select form-select-sm">
+                            <option value="">All subjects</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="question-paper-detail-content">
+            <div class="text-center py-5">
+                <div class="spinner-border" style="color:#2c3e50"></div>
+                <p class="mt-2">Loading questions...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="utils.js"></script>
+    <script src="question-papers.js"></script>
+</body>
+</html>

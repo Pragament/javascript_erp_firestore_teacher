@@ -12,14 +12,17 @@ const devDir = join(distRoot, 'dev');
 const prodDir = join(distRoot, 'prod');
 const command = process.argv[2] || 'dev';
 
-const HTML_FILES = ['index.html', 'analytics.html', 'report.html', 'test-results.html'];
+const HTML_FILES = ['index.html', 'analytics.html', 'report.html', 'test-results.html', 'audit-log.html', 'question-papers.html', 'question-paper-detail.html'];
 const CSS_FILES = ['style.css'];
-const JS_FILES = ['utils.js', 'app.js', 'analytics.js', 'report.js', 'test-results.js'];
+const JS_FILES = ['utils.js', 'app.js', 'analytics.js', 'report.js', 'test-results.js', 'audit-log.js', 'question-papers.js'];
 const PAGE_JS_ENTRIES = {
   'index.html': ['utils.js', 'app.js'],
   'analytics.html': ['utils.js', 'analytics.js'],
   'report.html': ['utils.js', 'report.js'],
-  'test-results.html': ['utils.js', 'test-results.js']
+  'test-results.html': ['utils.js', 'test-results.js'],
+  'audit-log.html': ['utils.js', 'audit-log.js'],
+  'question-papers.html': ['utils.js', 'question-papers.js'],
+  'question-paper-detail.html': ['utils.js', 'question-papers.js']
 };
 
 const obfuscatorOptions = {
