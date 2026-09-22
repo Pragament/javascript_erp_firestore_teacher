@@ -12,9 +12,10 @@ const devDir = join(distRoot, 'dev');
 const prodDir = join(distRoot, 'prod');
 const command = process.argv[2] || 'dev';
 
-const HTML_FILES = ['index.html', 'analytics.html', 'report.html', 'test-results.html', 'audit-log.html', 'question-papers.html', 'question-paper-detail.html'];
+const HTML_FILES = ['index.html', 'analytics.html', 'report.html', 'test-results.html', 'audit-log.html', 'question-papers.html', 'question-paper-detail.html', 'psed-bulk-update.html'];
 const CSS_FILES = ['style.css'];
-const JS_FILES = ['utils.js', 'app.js', 'analytics.js', 'report.js', 'test-results.js', 'audit-log.js', 'question-papers.js'];
+const JS_FILES = ['utils.js', 'app.js', 'analytics.js', 'report.js', 'test-results.js', 'audit-log.js', 'question-papers.js', 'psed-bulk-update.js'];
+const STATIC_FILES = ['version.js'];
 const PAGE_JS_ENTRIES = {
   'index.html': ['utils.js', 'app.js'],
   'analytics.html': ['utils.js', 'analytics.js'],
@@ -22,7 +23,8 @@ const PAGE_JS_ENTRIES = {
   'test-results.html': ['utils.js', 'test-results.js'],
   'audit-log.html': ['utils.js', 'audit-log.js'],
   'question-papers.html': ['utils.js', 'question-papers.js'],
-  'question-paper-detail.html': ['utils.js', 'question-papers.js']
+  'question-paper-detail.html': ['utils.js', 'question-papers.js'],
+  'psed-bulk-update.html': ['utils.js', 'psed-bulk-update.js']
 };
 
 const obfuscatorOptions = {
@@ -65,13 +67,19 @@ function getProdAssetName(logicalName, content) {
 
 function replaceLocalAsset(html, assetType, originalPath, nextPath) {
   const attributeName = assetType === 'script' ? 'src' : 'href';
-  const matcher = new RegExp(`(${attributeName}=["'])${originalPath}(["'])`, 'g');
+  const escapedPath = originalPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matcher = new RegExp(`(${attributeName}=["'])${escapedPath}(?:\\?[^"']*)?(["'])`, 'g');
   return html.replace(matcher, `$1${nextPath}$2`);
+}
+
+function hasLocalScriptReference(line, sourceFile) {
+  const escapedFile = sourceFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`src=["']${escapedFile}(?:\\?[^"']*)?["']`).test(line);
 }
 
 function replaceLocalScriptsWithBundle(html, sourceFiles, bundlePath) {
   const lines = html.split('\n');
-  const filteredLines = lines.filter((line) => !sourceFiles.some((sourceFile) => line.includes(`src="${sourceFile}"`) || line.includes(`src='${sourceFile}'`)));
+  const filteredLines = lines.filter((line) => !sourceFiles.some((sourceFile) => hasLocalScriptReference(line, sourceFile)));
   const bundleTag = `    <script src="${bundlePath}"></script>`;
   const bodyCloseIndex = filteredLines.findIndex((line) => line.includes('</body>'));
 
@@ -194,6 +202,10 @@ async function runBuildDev() {
     await copySourceFile(fileName, devDir);
   }
 
+  for (const fileName of STATIC_FILES) {
+    await copySourceFile(fileName, devDir);
+  }
+
   console.log(`Built readable development output in ${devDir}`);
 }
 
@@ -213,6 +225,10 @@ async function runBuildProd() {
 
   for (const fileName of HTML_FILES) {
     await processHtmlFile(fileName, assetsByPage);
+  }
+
+  for (const fileName of STATIC_FILES) {
+    await copySourceFile(fileName, prodDir);
   }
 
   console.log(`Built hardened release output in ${prodDir}`);
