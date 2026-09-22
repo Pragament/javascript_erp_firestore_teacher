@@ -41,6 +41,12 @@ const importSummaryEl = document.getElementById("question-paper-import-summary")
 const importPreviewBodyEl = document.getElementById("question-paper-import-preview-body");
 const previewImportBtn = document.getElementById("question-paper-preview-import-btn");
 const confirmImportBtn = document.getElementById("question-paper-confirm-import-btn");
+const titleModalEl = document.getElementById("questionPaperTitleModal");
+const titleIdEl = document.getElementById("question-paper-title-id");
+const titleMetaEl = document.getElementById("question-paper-title-meta");
+const titleInputEl = document.getElementById("question-paper-title-input");
+const titleMessageEl = document.getElementById("question-paper-title-message");
+const titleSaveBtn = document.getElementById("question-paper-title-save-btn");
 
 const detailContentEl = document.getElementById("question-paper-detail-content");
 const detailSubtitleEl = document.getElementById("question-paper-detail-subtitle");
@@ -53,6 +59,7 @@ let currentQuestionPaper = null;
 let currentQuestions = [];
 let currentUser = null;
 let pendingQuestionPaperImport = null;
+let pendingTitlePaper = null;
 
 const QUESTION_PAPER_IMPORT_COLUMNS = [
   "question",
@@ -163,6 +170,12 @@ function setImportMessage(message, type = "muted") {
   if (!importMessageEl) return;
   importMessageEl.innerHTML = String(message || "");
   importMessageEl.className = `small mb-3 text-${type}`;
+}
+
+function setTitleMessage(message, type = "muted") {
+  if (!titleMessageEl) return;
+  titleMessageEl.textContent = message;
+  titleMessageEl.className = `small mt-3 text-${type}`;
 }
 
 function resetQuestionPaperImportModal() {
@@ -654,7 +667,12 @@ function renderQuestionPaperList() {
                   <h5 class="fw-bold mb-1">${escapeHtml(getPaperTitle(paper))}</h5>
                   <div class="small text-muted">${escapeHtml(getPaperExternalId(paper) || paper.id)}</div>
                 </div>
-                <span class="badge" style="background:#16a085;color:white">${questionCount} Questions</span>
+                <div class="d-flex align-items-center gap-2">
+                  <button type="button" class="btn btn-sm btn-outline-secondary question-paper-title-edit-btn" data-paper-id="${escapeHtml(paper.id)}" title="Edit title">
+                    <i class="bi bi-pencil-square"></i>
+                  </button>
+                  <span class="badge" style="background:#16a085;color:white">${questionCount} Questions</span>
+                </div>
               </div>
               <div class="small text-muted mb-3">
                 ${subjects.length ? escapeHtml(subjects.join(", ")) : "No subjects found"}
@@ -668,6 +686,68 @@ function renderQuestionPaperList() {
       }).join("")}
     </div>
   `;
+}
+
+function openQuestionPaperTitleModal(paperId) {
+  const paper = questionPapers.find((item) => item.id === paperId);
+  if (!paper || !titleModalEl || !titleInputEl || !titleIdEl) return;
+
+  pendingTitlePaper = paper;
+  titleIdEl.value = paper.id;
+  titleInputEl.value = getPaperTitle(paper);
+  if (titleMetaEl) {
+    titleMetaEl.textContent = `${getPaperExternalId(paper) || paper.id} - ${(paper.questions || []).length} question${(paper.questions || []).length === 1 ? "" : "s"}`;
+  }
+  setTitleMessage("Changes save to Firestore after you click Save Title.");
+  bootstrap.Modal.getOrCreateInstance(titleModalEl).show();
+  setTimeout(() => titleInputEl.focus(), 150);
+}
+
+async function saveQuestionPaperTitle() {
+  if (!pendingTitlePaper || !titleInputEl || !titleSaveBtn) return;
+
+  const nextTitle = normalizeText(titleInputEl.value);
+  if (!nextTitle) {
+    setTitleMessage("Title is required.", "danger");
+    titleInputEl.focus();
+    return;
+  }
+
+  const previousTitle = getPaperTitle(pendingTitlePaper);
+  if (nextTitle === previousTitle) {
+    bootstrap.Modal.getInstance(titleModalEl)?.hide();
+    return;
+  }
+
+  const originalHtml = titleSaveBtn.innerHTML;
+  titleSaveBtn.disabled = true;
+  titleSaveBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+
+  try {
+    const updates = {
+      templateName: nextTitle,
+      testName: nextTitle,
+      name: nextTitle,
+      title: nextTitle,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser?.email || "",
+    };
+
+    await firestore.collection("questionpapers").doc(pendingTitlePaper.id).set(updates, { merge: true });
+
+    questionPapers = questionPapers.map((paper) => (
+      paper.id === pendingTitlePaper.id ? { ...paper, ...updates } : paper
+    ));
+    pendingTitlePaper = null;
+    bootstrap.Modal.getInstance(titleModalEl)?.hide();
+    renderQuestionPaperList();
+  } catch (error) {
+    console.error("Save question paper title:", error);
+    setTitleMessage(error.message || "Unable to save title.", "danger");
+  } finally {
+    titleSaveBtn.disabled = false;
+    titleSaveBtn.innerHTML = originalHtml;
+  }
 }
 
 async function loadQuestionPapers() {
@@ -891,6 +971,17 @@ if (listContentEl) {
   listSearchEl?.addEventListener("input", renderQuestionPaperList);
   listSortEl?.addEventListener("change", renderQuestionPaperList);
   listRefreshBtn?.addEventListener("click", loadQuestionPapers);
+  listContentEl?.addEventListener("click", (event) => {
+    const editButton = event.target.closest(".question-paper-title-edit-btn");
+    if (!editButton) return;
+    openQuestionPaperTitleModal(editButton.dataset.paperId || "");
+  });
+  titleSaveBtn?.addEventListener("click", saveQuestionPaperTitle);
+  titleInputEl?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    saveQuestionPaperTitle();
+  });
   createQuestionPaperBtn?.addEventListener("click", () => {
     resetQuestionPaperImportModal();
     bootstrap.Modal.getOrCreateInstance(importModalEl).show();
