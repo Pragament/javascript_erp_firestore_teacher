@@ -35,6 +35,7 @@ const detailContentEl = document.getElementById("question-paper-detail-content")
 const detailSubtitleEl = document.getElementById("question-paper-detail-subtitle");
 const detailSearchEl = document.getElementById("question-detail-search");
 const detailSubjectEl = document.getElementById("question-detail-subject");
+const detailExportCsvBtn = document.getElementById("question-paper-export-csv");
 
 let questionPapers = [];
 let currentQuestionPaper = null;
@@ -97,6 +98,37 @@ function plainTextFromRichHtml(value) {
   const template = document.createElement("template");
   template.innerHTML = sanitizeRichHtml(raw);
   return (template.content.textContent || raw).replace(/\s+/g, " ").trim();
+}
+
+function escapeCSV(value) {
+  const str = String(value ?? "");
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function rowsToCSV(rows) {
+  return rows.map((row) => row.map(escapeCSV).join(",")).join("\n");
+}
+
+function downloadCSV(filename, csv) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function getSafeFilenamePart(value, fallback = "question-paper") {
+  return normalizeText(value, fallback)
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || fallback;
 }
 
 function renderRichText(value, fallback = "-") {
@@ -226,6 +258,22 @@ function getOptionLetter(optionNumber) {
   return ["A", "B", "C", "D"][Number(optionNumber) - 1] || "";
 }
 
+function getQuestionClass(question, paper) {
+  return normalizeText(
+    question?.class ||
+    question?.Class ||
+    question?.grade ||
+    question?.Grade ||
+    question?.standard ||
+    question?.Standard ||
+    paper?.class ||
+    paper?.Class ||
+    paper?.grade ||
+    paper?.Grade ||
+    paper?.year
+  );
+}
+
 function buildQuestionDetails(question, index) {
   const correctOptions = getCorrectOptionNumbers(question);
   return {
@@ -235,6 +283,7 @@ function buildQuestionDetails(question, index) {
     chapter: normalizeText(question?.Chapter || question?.chapter),
     topic: normalizeText(question?.Topic || question?.topic),
     subtopic: normalizeText(question?.Subtopic || question?.subtopic),
+    className: getQuestionClass(question, currentQuestionPaper),
     questionText: normalizeText(question?.Question || question?.question || question?.questionText),
     options: [1, 2, 3, 4].map((optionNumber) => ({
       number: optionNumber,
@@ -433,6 +482,50 @@ function renderQuestionPaperDetail() {
   `;
 }
 
+function exportQuestionPaperCSV() {
+  if (!currentQuestionPaper || currentQuestions.length === 0) return;
+
+  const header = [
+    "question",
+    "option1",
+    "option2",
+    "option3",
+    "option4",
+    "correct_option",
+    "subject",
+    "chapter",
+    "topic",
+    "subtopic",
+    "class",
+    "correct_answer_logic",
+  ];
+
+  const rows = currentQuestions.map((question) => {
+    const optionText = (optionNumber) => plainTextFromRichHtml(question.options[optionNumber - 1]?.text || "");
+    const correctOption = question.correctOptions
+      .map((optionNumber) => getOptionLetter(optionNumber).toLowerCase())
+      .join("");
+
+    return [
+      plainTextFromRichHtml(question.questionText),
+      optionText(1),
+      optionText(2),
+      optionText(3),
+      optionText(4),
+      correctOption,
+      question.subject,
+      question.chapter,
+      question.topic,
+      question.subtopic,
+      question.className,
+      plainTextFromRichHtml(question.explanation),
+    ];
+  });
+
+  const filename = `${getSafeFilenamePart(getPaperTitle(currentQuestionPaper), "question-paper")}-${getSafeFilenamePart(getPaperExternalId(currentQuestionPaper) || currentQuestionPaper.id, "paper")}.csv`;
+  downloadCSV(filename, rowsToCSV([header, ...rows]));
+}
+
 async function loadQuestionPaperDetail() {
   if (!detailContentEl) return;
   const id = getQuestionPaperIdFromQuery();
@@ -451,6 +544,7 @@ async function loadQuestionPaperDetail() {
     currentQuestions = (currentQuestionPaper.questions || [])
       .map(buildQuestionDetails)
       .sort((a, b) => a.questionNumber - b.questionNumber);
+    if (detailExportCsvBtn) detailExportCsvBtn.disabled = currentQuestions.length === 0;
     renderSubjectOptions();
     renderQuestionPaperDetail();
   } catch (error) {
@@ -482,5 +576,6 @@ if (listContentEl) {
 if (detailContentEl) {
   detailSearchEl?.addEventListener("input", renderQuestionPaperDetail);
   detailSubjectEl?.addEventListener("change", renderQuestionPaperDetail);
+  detailExportCsvBtn?.addEventListener("click", exportQuestionPaperCSV);
   requireAuthThen(loadQuestionPaperDetail);
 }
