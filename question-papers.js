@@ -30,6 +30,17 @@ const listSubtitleEl = document.getElementById("question-papers-subtitle");
 const listSearchEl = document.getElementById("question-papers-search");
 const listSortEl = document.getElementById("question-papers-sort");
 const listRefreshBtn = document.getElementById("question-papers-refresh");
+const createQuestionPaperBtn = document.getElementById("create-question-paper-btn");
+const importModalEl = document.getElementById("questionPaperImportModal");
+const importNameEl = document.getElementById("question-paper-import-name");
+const importFileEl = document.getElementById("question-paper-import-file");
+const importCsvEl = document.getElementById("question-paper-import-csv");
+const importMessageEl = document.getElementById("question-paper-import-message");
+const importPreviewEl = document.getElementById("question-paper-import-preview");
+const importSummaryEl = document.getElementById("question-paper-import-summary");
+const importPreviewBodyEl = document.getElementById("question-paper-import-preview-body");
+const previewImportBtn = document.getElementById("question-paper-preview-import-btn");
+const confirmImportBtn = document.getElementById("question-paper-confirm-import-btn");
 
 const detailContentEl = document.getElementById("question-paper-detail-content");
 const detailSubtitleEl = document.getElementById("question-paper-detail-subtitle");
@@ -40,6 +51,23 @@ const detailExportCsvBtn = document.getElementById("question-paper-export-csv");
 let questionPapers = [];
 let currentQuestionPaper = null;
 let currentQuestions = [];
+let currentUser = null;
+let pendingQuestionPaperImport = null;
+
+const QUESTION_PAPER_IMPORT_COLUMNS = [
+  "question",
+  "option1",
+  "option2",
+  "option3",
+  "option4",
+  "correct_option",
+  "subject",
+  "chapter",
+  "topic",
+  "subtopic",
+  "class",
+  "correct_answer_logic",
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -129,6 +157,282 @@ function getSafeFilenamePart(value, fallback = "question-paper") {
     .replace(/[^a-z0-9_-]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase() || fallback;
+}
+
+function setImportMessage(message, type = "muted") {
+  if (!importMessageEl) return;
+  importMessageEl.textContent = message;
+  importMessageEl.className = `small mb-3 text-${type}`;
+}
+
+function resetQuestionPaperImportModal() {
+  pendingQuestionPaperImport = null;
+  if (importNameEl) importNameEl.value = "";
+  if (importFileEl) importFileEl.value = "";
+  if (importCsvEl) importCsvEl.value = "";
+  if (importPreviewEl) importPreviewEl.classList.add("d-none");
+  if (importPreviewBodyEl) importPreviewBodyEl.innerHTML = "";
+  if (importSummaryEl) importSummaryEl.textContent = "";
+  if (confirmImportBtn) confirmImportBtn.disabled = true;
+  setImportMessage("Paste CSV or choose a CSV file, then preview before saving.");
+}
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  const input = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const nextChar = input[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => normalizeText(value))) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((value) => normalizeText(value))) rows.push(row);
+  return rows;
+}
+
+function getNormalizedHeaderName(value) {
+  return normalizeComparable(value).replace(/\s+/g, "_");
+}
+
+function getCSVRecords(text) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) {
+    throw new Error("CSV must include a header row and at least one question row.");
+  }
+
+  const headers = rows[0].map(getNormalizedHeaderName);
+  const missingColumns = QUESTION_PAPER_IMPORT_COLUMNS.filter((column) => !headers.includes(column));
+  if (missingColumns.length > 0) {
+    throw new Error(`Missing required column(s): ${missingColumns.join(", ")}`);
+  }
+
+  return rows.slice(1).map((row) => {
+    const record = {};
+    headers.forEach((header, index) => {
+      record[header] = normalizeText(row[index]);
+    });
+    return record;
+  }).filter((record) => normalizeText(record.question));
+}
+
+function getCorrectOptionNumbersFromImport(value) {
+  return uniqueSortedOptionNumbers(getOptionNumbersFromValue(value));
+}
+
+function buildQuestionFromImportRecord(record, index) {
+  const correctOptions = getCorrectOptionNumbersFromImport(record.correct_option);
+  const correctLettersLower = correctOptions.map((optionNumber) => getOptionLetter(optionNumber).toLowerCase()).join("");
+  const correctLettersUpper = correctLettersLower.toUpperCase();
+  const selectedTexts = correctOptions
+    .map((optionNumber) => record[`option${optionNumber}`])
+    .filter(Boolean);
+  const subject = normalizeText(record.subject, "General");
+
+  return {
+    subjectname_questionnumber: `${subject}_Q${index + 1}`,
+    questionNumber: index + 1,
+    Question: record.question,
+    question: record.question,
+    questionText: record.question,
+    "Option 1": record.option1,
+    "Option 2": record.option2,
+    "Option 3": record.option3,
+    "Option 4": record.option4,
+    "Correct Option": correctOptions.length === 1 ? correctOptions[0] : correctOptions.join(","),
+    "Correct Options": correctOptions,
+    CorrectAnswer: correctLettersUpper,
+    correctAnswer: correctLettersLower,
+    Answer: selectedTexts.join(" | "),
+    Subject: subject,
+    subject,
+    Chapter: record.chapter,
+    chapter: record.chapter,
+    Topic: record.topic,
+    topic: record.topic,
+    Subtopic: record.subtopic,
+    subtopic: record.subtopic,
+    Class: record.class,
+    class: record.class,
+    feedbackCorrectAnswer: record.correct_answer_logic,
+    feedback: record.correct_answer_logic,
+    explanation: record.correct_answer_logic,
+  };
+}
+
+function validateImportedQuestions(questions) {
+  if (questions.length === 0) {
+    throw new Error("No question rows found in the CSV.");
+  }
+
+  const invalidRows = questions
+    .map((question, index) => ({ question, index }))
+    .filter(({ question }) => {
+      const hasOptions = [1, 2, 3, 4].some((optionNumber) => normalizeText(question[`Option ${optionNumber}`]));
+      return !normalizeText(question.Question) || !hasOptions || getCorrectOptionNumbers(question).length === 0;
+    })
+    .map(({ index }) => index + 1);
+
+  if (invalidRows.length > 0) {
+    throw new Error(`Question row(s) need question text, at least one option, and correct_option: ${invalidRows.join(", ")}`);
+  }
+}
+
+async function getQuestionPaperImportCSVText() {
+  const file = importFileEl?.files?.[0] || null;
+  if (file) return file.text();
+  return normalizeText(importCsvEl?.value);
+}
+
+function buildImportedPaperPreviewData(name, questions) {
+  const subjects = [...new Set(questions.map((question) => getQuestionSubject(question)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const classes = [...new Set(questions.map((question) => normalizeText(question.class || question.Class)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  return {
+    name,
+    subjects,
+    classes,
+    questions,
+  };
+}
+
+function renderQuestionPaperImportPreview(importData) {
+  if (!importPreviewEl || !importPreviewBodyEl || !importSummaryEl) return;
+  importPreviewEl.classList.remove("d-none");
+  importSummaryEl.textContent = `${importData.questions.length} questions`;
+
+  importPreviewBodyEl.innerHTML = importData.questions.slice(0, 20).map((question, index) => {
+    const correctLabels = getCorrectOptionNumbers(question).map(getOptionLetter).join(", ");
+    const options = [1, 2, 3, 4]
+      .map((optionNumber) => {
+        const text = question[`Option ${optionNumber}`];
+        if (!text) return "";
+        const isCorrect = getCorrectOptionNumbers(question).includes(optionNumber);
+        return `<div class="${isCorrect ? "question-paper-option-correct" : ""}"><span class="fw-semibold">${escapeHtml(getOptionLetter(optionNumber))}.</span> ${escapeHtml(text)}</div>`;
+      })
+      .join("");
+
+    return `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(question.Question)}</td>
+        <td>${options || "-"}</td>
+        <td><span class="badge bg-success">${escapeHtml(correctLabels)}</span></td>
+        <td>${escapeHtml(getQuestionSubject(question))}</td>
+        <td>
+          <div>${escapeHtml(question.Chapter || "-")}</div>
+          <div class="small text-muted">${escapeHtml([question.Topic, question.Subtopic].filter(Boolean).join(" / ") || "-")}</div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  const hiddenCount = importData.questions.length - 20;
+  if (hiddenCount > 0) {
+    importPreviewBodyEl.insertAdjacentHTML("beforeend", `
+      <tr>
+        <td colspan="6" class="text-center text-muted">Preview showing first 20 questions. ${hiddenCount} more question${hiddenCount === 1 ? "" : "s"} will also be imported.</td>
+      </tr>
+    `);
+  }
+}
+
+async function previewQuestionPaperImport() {
+  try {
+    const csvText = await getQuestionPaperImportCSVText();
+    if (!csvText) {
+      throw new Error("Paste CSV or choose a CSV file first.");
+    }
+
+    const records = getCSVRecords(csvText);
+    const questions = records.map(buildQuestionFromImportRecord);
+    validateImportedQuestions(questions);
+
+    const fallbackName = `Question Paper ${new Date().toLocaleDateString()}`;
+    const name = normalizeText(importNameEl?.value, fallbackName);
+    pendingQuestionPaperImport = buildImportedPaperPreviewData(name, questions);
+    renderQuestionPaperImportPreview(pendingQuestionPaperImport);
+    if (confirmImportBtn) confirmImportBtn.disabled = false;
+    setImportMessage(`Preview ready. ${questions.length} question${questions.length === 1 ? "" : "s"} will be created only after confirmation.`, "success");
+  } catch (error) {
+    pendingQuestionPaperImport = null;
+    if (confirmImportBtn) confirmImportBtn.disabled = true;
+    if (importPreviewEl) importPreviewEl.classList.add("d-none");
+    setImportMessage(error.message || "Unable to preview CSV.", "danger");
+  }
+}
+
+async function confirmQuestionPaperImport() {
+  if (!pendingQuestionPaperImport || !currentUser) return;
+
+  const originalHtml = confirmImportBtn?.innerHTML || "";
+  if (confirmImportBtn) {
+    confirmImportBtn.disabled = true;
+    confirmImportBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+  }
+
+  try {
+    const docRef = firestore.collection("questionpapers").doc();
+    const paperData = {
+      questionPaperID: docRef.id,
+      templateName: pendingQuestionPaperImport.name,
+      testName: pendingQuestionPaperImport.name,
+      name: pendingQuestionPaperImport.name,
+      title: pendingQuestionPaperImport.name,
+      class: pendingQuestionPaperImport.classes.join(", "),
+      subjects: pendingQuestionPaperImport.subjects,
+      questions: pendingQuestionPaperImport.questions,
+      importedFrom: "csv",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdBy: currentUser.email || "",
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.email || "",
+    };
+
+    await docRef.set(paperData);
+    bootstrap.Modal.getInstance(importModalEl)?.hide();
+    resetQuestionPaperImportModal();
+    await loadQuestionPapers();
+    window.location.href = `question-paper-detail.html?id=${encodeURIComponent(docRef.id)}`;
+  } catch (error) {
+    console.error("Create question paper from CSV:", error);
+    setImportMessage(error.message || "Unable to create question paper.", "danger");
+    if (confirmImportBtn) confirmImportBtn.disabled = false;
+  } finally {
+    if (confirmImportBtn) confirmImportBtn.innerHTML = originalHtml || '<i class="bi bi-check2-circle me-1"></i>Create Question Paper';
+  }
 }
 
 function renderRichText(value, fallback = "-") {
@@ -556,12 +860,14 @@ async function loadQuestionPaperDetail() {
 function requireAuthThen(callback) {
   auth.onAuthStateChanged((user) => {
     if (!user) {
+      currentUser = null;
       if (listSubtitleEl) listSubtitleEl.textContent = "Please sign in from the teacher dashboard first.";
       if (detailSubtitleEl) detailSubtitleEl.textContent = "Please sign in from the teacher dashboard first.";
       if (listContentEl) listContentEl.innerHTML = getSignInPromptHtml();
       if (detailContentEl) detailContentEl.innerHTML = getSignInPromptHtml();
       return;
     }
+    currentUser = user;
     callback();
   });
 }
@@ -570,6 +876,22 @@ if (listContentEl) {
   listSearchEl?.addEventListener("input", renderQuestionPaperList);
   listSortEl?.addEventListener("change", renderQuestionPaperList);
   listRefreshBtn?.addEventListener("click", loadQuestionPapers);
+  createQuestionPaperBtn?.addEventListener("click", () => {
+    resetQuestionPaperImportModal();
+    bootstrap.Modal.getOrCreateInstance(importModalEl).show();
+  });
+  previewImportBtn?.addEventListener("click", previewQuestionPaperImport);
+  confirmImportBtn?.addEventListener("click", confirmQuestionPaperImport);
+  importCsvEl?.addEventListener("input", () => {
+    pendingQuestionPaperImport = null;
+    if (confirmImportBtn) confirmImportBtn.disabled = true;
+    if (importPreviewEl) importPreviewEl.classList.add("d-none");
+  });
+  importFileEl?.addEventListener("change", () => {
+    pendingQuestionPaperImport = null;
+    if (confirmImportBtn) confirmImportBtn.disabled = true;
+    if (importPreviewEl) importPreviewEl.classList.add("d-none");
+  });
   requireAuthThen(loadQuestionPapers);
 }
 
