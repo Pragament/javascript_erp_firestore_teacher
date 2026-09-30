@@ -129,6 +129,7 @@
 .audit-log-table .audit-detail-cell{white-space:normal;text-align:left;min-width:320px;max-width:520px;line-height:1.35}
 .question-papers-page,.question-paper-detail-page{max-width:1280px}.question-paper-questions-table th{background:#f8f9fa;color:#2c3e50;white-space:nowrap}.question-paper-questions-table td{vertical-align:top}.question-paper-question-cell{min-width:280px}.question-paper-options{min-width:260px}.question-paper-options>div{border-bottom:1px solid #edf0f2;padding:.35rem 0}.question-paper-options>div:last-child{border-bottom:0}.question-paper-option-correct{background:#e8f5f1;border-left:3px solid #16a085;padding-left:.5rem!important}
 .question-paper-import-preview-table{max-height:420px;overflow:auto}.question-paper-import-preview-table th{background:#f8f9fa;color:#2c3e50;position:sticky;top:0;z-index:1}.question-paper-import-preview-table td{vertical-align:top;min-width:120px}
+.bubble-preview-question-header{text-align:center;white-space:nowrap}.bubble-preview-answer-cell{text-align:center;font-weight:700;border-radius:4px;min-width:42px}.bubble-preview-correct{background:#d4edda!important;color:#155724}.bubble-preview-wrong{background:#f8d7da!important;color:#721c24}.bubble-preview-skipped{background:#e9ecef!important;color:#495057}
 .audit-pagination{background:white;border:1px solid #dee2e6;border-radius:8px;padding:.75rem 1rem}
 
 /* Calendar Styles */

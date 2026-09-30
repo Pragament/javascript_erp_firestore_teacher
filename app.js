@@ -113,6 +113,7 @@ const elements = {
     bubbleImportSummary: document.getElementById('bubble-import-summary'),
     bubbleImportUnmatched: document.getElementById('bubble-import-unmatched'),
     bubbleImportAbsentees: document.getElementById('bubble-import-absentees'),
+    bubbleImportPreviewHeader: document.getElementById('bubble-import-preview-header'),
     bubbleImportPreviewBody: document.getElementById('bubble-import-preview-body'),
     bubbleImportAbsenteeBody: document.getElementById('bubble-import-absentee-body'),
     bubbleImportPreviewNote: document.getElementById('bubble-import-preview-note'),
@@ -946,6 +947,62 @@ function sortBubbleImportAbsentees(absentees) {
     });
 }
 
+function getBubblePreviewQuestionColumns(questionColumns, questionByNumber) {
+    const selectedNumbers = [
+        ...questionColumns.slice(0, 2).map((column) => column.questionNumber),
+        ...questionColumns.slice(-2).map((column) => column.questionNumber),
+    ];
+    return [...new Set(selectedNumbers)]
+        .map((questionNumber) => questionByNumber.get(questionNumber))
+        .filter(Boolean)
+        .map((question) => ({
+            questionNumber: question.questionNumber,
+            statusKey: question.statusKey,
+        }));
+}
+
+function getBubblePreviewStatusClass(status) {
+    const normalized = normalizeImportComparable(status);
+    if (!normalized || normalized === 's') return 'bubble-preview-skipped';
+    if (/^r(?:_[a-z0-9]+)?$/.test(normalized)) return 'bubble-preview-correct';
+    return 'bubble-preview-wrong';
+}
+
+function getBubblePreviewMarkedOption(status) {
+    const normalized = normalizeImportComparable(status);
+    if (!normalized || normalized === 's') return 'S';
+    if (normalized.startsWith('r_')) return normalized.slice(2).toUpperCase();
+    if (normalized === 'r') return 'R';
+    return normalized.toUpperCase();
+}
+
+function renderBubbleImportPreviewHeader(previewQuestionColumns) {
+    if (!elements.bubbleImportPreviewHeader) return;
+    elements.bubbleImportPreviewHeader.innerHTML = `
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="rollNo">Roll</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="name">Student</button></th>
+        ${previewQuestionColumns.map((question) => `<th class="bubble-preview-question-header">Q${escapeHtml(question.questionNumber)}</th>`).join('')}
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="correct">Correct</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="wrong">Wrong</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="skipped">Skipped</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="total">Total</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="earnedMarks">Marks</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="percent">Percent</button></th>
+        <th><button type="button" class="table-sort-header bubble-import-sort" data-sort-key="previewRank">Rank</button></th>
+    `;
+}
+
+function renderBubbleImportQuestionCells(result, previewQuestionColumns) {
+    return previewQuestionColumns.map((question) => {
+        const status = result[question.statusKey];
+        return `
+            <td class="bubble-preview-answer-cell ${getBubblePreviewStatusClass(status)}">
+                ${escapeHtml(getBubblePreviewMarkedOption(status))}
+            </td>
+        `;
+    }).join('');
+}
+
 function bindBubbleImportPreviewSortButtons() {
     document.querySelectorAll('.bubble-import-sort').forEach((button) => {
         button.addEventListener('click', () => {
@@ -975,6 +1032,8 @@ function showBubbleImportPreview(importData) {
     const sortedImportedRows = sortBubbleImportRows(importData.importedResults, bubbleImportPreviewSort);
     const previewRows = sortedImportedRows.slice(0, 25);
     const absentees = sortBubbleImportAbsentees(importData.absentees || []);
+    const previewQuestionColumns = importData.previewQuestionColumns || [];
+    renderBubbleImportPreviewHeader(previewQuestionColumns);
     elements.bubbleImportSummary.innerHTML = `
         <strong>${escapeHtml(importData.test.testName || 'Test')}</strong><br>
         ${importData.importedResults.length} matched student row${importData.importedResults.length === 1 ? '' : 's'},
@@ -994,6 +1053,7 @@ function showBubbleImportPreview(importData) {
         <tr>
             <td>${escapeHtml(result.rollNo || '')}</td>
             <td>${escapeHtml(result.name || result.studentId || '')}</td>
+            ${renderBubbleImportQuestionCells(result, previewQuestionColumns)}
             <td>${escapeHtml(result.correct ?? '')}</td>
             <td>${escapeHtml(result.wrong ?? '')}</td>
             <td>${escapeHtml(result.skipped ?? '')}</td>
@@ -1148,6 +1208,7 @@ async function prepareStudentBubblesImport(testId, file) {
             testId,
             test,
             importedResults: previewImportedResults,
+            previewQuestionColumns: getBubblePreviewQuestionColumns(questionColumns, questionByNumber),
             allResults,
             importedStudentIds,
             existingResults,
