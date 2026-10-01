@@ -1,5 +1,5 @@
 (function () {
-  const APP_VERSION = "2026.10.01.5";
+  const APP_VERSION = "2026.10.01.6";
 
   window.APP_VERSION = APP_VERSION;
 

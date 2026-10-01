@@ -784,9 +784,19 @@ function getSubjectStatsForResult(result, scoringRules) {
   }));
 }
 
+function buildSubjectScoreFieldUpdates(subjectStats) {
+  return (subjectStats || []).reduce((updates, subjectStat) => {
+    const subject = normalizeText(subjectStat.subject);
+    if (!subject || subject.includes(".")) return updates;
+    updates[subject] = subjectStat.earnedMarks;
+    return updates;
+  }, {});
+}
+
 function buildResultSummaryUpdates(result, metrics, rank, totalStudents, scoringRules) {
   const percent = Math.round(metrics.marks);
   const percentile = totalStudents ? ((totalStudents - rank + 1) / totalStudents) * 100 : 0;
+  const subjectStats = getSubjectStatsForResult(result, scoringRules);
   return {
     correct: metrics.correct,
     wrong: metrics.wrong,
@@ -802,8 +812,14 @@ function buildResultSummaryUpdates(result, metrics, rank, totalStudents, scoring
     passed: metrics.passed,
     rank,
     percentile,
+    Total: metrics.earnedMarks,
+    Rank: rank,
+    Percentile: percentile,
+    Grade: metrics.grade,
+    GPA: metrics.gradePoint,
+    ...buildSubjectScoreFieldUpdates(subjectStats),
     scoringRules,
-    subjectStats: getSubjectStatsForResult(result, scoringRules),
+    subjectStats,
     recalculatedAt: firebase.firestore.FieldValue.serverTimestamp(),
   };
 }
