@@ -117,10 +117,18 @@ const elements = {
     bubbleImportPreviewBody: document.getElementById('bubble-import-preview-body'),
     bubbleImportAbsenteeBody: document.getElementById('bubble-import-absentee-body'),
     bubbleImportPreviewNote: document.getElementById('bubble-import-preview-note'),
-    confirmBubbleImportBtn: document.getElementById('confirm-bubble-import-btn')
+    confirmBubbleImportBtn: document.getElementById('confirm-bubble-import-btn'),
+    deleteTestResultsModal: document.getElementById('deleteTestResultsModal'),
+    deleteResultsSummary: document.getElementById('delete-results-summary'),
+    deleteResultsChanges: document.getElementById('delete-results-changes'),
+    deleteResultsPreviewBody: document.getElementById('delete-results-preview-body'),
+    deleteResultsConfirmText: document.getElementById('delete-results-confirm-text'),
+    deleteResultsMessage: document.getElementById('delete-results-message'),
+    confirmDeleteResultsBtn: document.getElementById('confirm-delete-results-btn')
 };
 
 let studentsDataTable = null;
+let pendingDeleteResults = null;
 
 // Day order for timetable display
 const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -889,6 +897,178 @@ async function exportTestStudentResultsCSV(testId) {
     }
 }
 
+function resetDeleteResultsModal() {
+    pendingDeleteResults = null;
+    if (elements.deleteResultsSummary) elements.deleteResultsSummary.textContent = '';
+    if (elements.deleteResultsChanges) elements.deleteResultsChanges.textContent = '';
+    if (elements.deleteResultsPreviewBody) elements.deleteResultsPreviewBody.innerHTML = '';
+    if (elements.deleteResultsConfirmText) elements.deleteResultsConfirmText.value = '';
+    if (elements.deleteResultsMessage) {
+        elements.deleteResultsMessage.textContent = 'No Firestore changes happen until you confirm.';
+        elements.deleteResultsMessage.className = 'small mt-2 text-muted';
+    }
+    if (elements.confirmDeleteResultsBtn) elements.confirmDeleteResultsBtn.disabled = true;
+}
+
+function updateDeleteResultsConfirmState() {
+    if (!elements.confirmDeleteResultsBtn || !elements.deleteResultsConfirmText) return;
+    const hasRows = (pendingDeleteResults?.results || []).length > 0;
+    elements.confirmDeleteResultsBtn.disabled = elements.deleteResultsConfirmText.value.trim() !== 'DELETE' || !hasRows;
+}
+
+async function prepareDeleteTestResults(testId) {
+    const button = Array.from(elements.testsContainer.querySelectorAll('.delete-test-results-btn'))
+        .find((item) => item.dataset.testId === testId);
+    const originalHtml = button?.innerHTML;
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Loading...';
+    }
+
+    try {
+        resetDeleteResultsModal();
+        const testSnap = await firestore.collection('tests').doc(testId).get();
+        if (!testSnap.exists) throw new Error('Test not found.');
+        const test = { id: testSnap.id, ...testSnap.data() };
+        if (!availableSections.some((section) => section.id === test.sectionId)) {
+            throw new Error('You do not have access to delete results for this test.');
+        }
+
+        const [resultsSnap, studentsSnap] = await Promise.all([
+            firestore.collection('results').where('testId', '==', testId).get(),
+            firestore.collection('students').where('sectionId', '==', test.sectionId).get(),
+        ]);
+        const students = studentsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const studentLookup = buildStudentLookup(students);
+        const results = resultsSnap.docs.map((doc) => {
+            const result = { id: doc.id, ...doc.data() };
+            const student = studentLookup.get(result.studentId) || studentLookup.get(result.id) || {};
+            return {
+                docRef: doc.ref,
+                docId: doc.id,
+                studentId: result.studentId || result.id || '',
+                studentName: student.name || result.name || '',
+                roll: getStudentRollValue(student, result),
+                marks: result.earnedMarks ?? result.marks ?? '',
+                rank: result.rank ?? '',
+            };
+        }).sort((a, b) => {
+            const rollA = getCanonicalRollKey(a.roll);
+            const rollB = getCanonicalRollKey(b.roll);
+            if (/^\d+$/.test(rollA) && /^\d+$/.test(rollB)) return Number(rollA) - Number(rollB);
+            return String(a.studentName || '').localeCompare(String(b.studentName || ''), undefined, { numeric: true });
+        });
+
+        pendingDeleteResults = { test, results };
+        elements.deleteResultsSummary.innerHTML = `
+            <strong>${escapeHtml(test.testName || 'Test')}</strong><br>
+            This will delete ${results.length} result document${results.length === 1 ? '' : 's'} for testId <span class="fw-semibold">${escapeHtml(test.id)}</span>.
+        `;
+        elements.deleteResultsChanges.innerHTML = `
+            <div class="fw-semibold mb-1">Firestore changes on confirm</div>
+            <div>Delete from <span class="fw-semibold">/results</span> where <span class="fw-semibold">testId == ${escapeHtml(test.id)}</span>.</div>
+            <div>Create one audit log document in <span class="fw-semibold">/resultEditAuditLogs</span> with actionType <span class="fw-semibold">test_results_delete</span>.</div>
+            <div>No <span class="fw-semibold">/tests</span>, <span class="fw-semibold">/students</span>, or <span class="fw-semibold">/questionpapers</span> documents will be deleted.</div>
+        `;
+        elements.deleteResultsPreviewBody.innerHTML = results.length
+            ? results.map((result) => `
+                <tr>
+                    <td><code>results/${escapeHtml(result.docId)}</code></td>
+                    <td>${escapeHtml(result.studentName || result.studentId || '-')}</td>
+                    <td>${escapeHtml(result.roll || '-')}</td>
+                    <td>${escapeHtml(result.marks)}</td>
+                    <td>${escapeHtml(result.rank)}</td>
+                </tr>
+            `).join('')
+            : '<tr><td colspan="5" class="text-center text-muted">No student result documents found for this test.</td></tr>';
+        if (elements.deleteResultsMessage) {
+            elements.deleteResultsMessage.textContent = results.length
+                ? 'Type DELETE to enable deletion.'
+                : 'There are no result documents to delete.';
+            elements.deleteResultsMessage.className = `small mt-2 ${results.length ? 'text-muted' : 'text-warning'}`;
+        }
+        updateDeleteResultsConfirmState();
+        bootstrap.Modal.getOrCreateInstance(elements.deleteTestResultsModal).show();
+    } catch (error) {
+        console.error('Prepare delete test results:', error);
+        alert(error.message || 'Unable to prepare result deletion.');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function confirmDeleteTestResults() {
+    if (!pendingDeleteResults || !elements.confirmDeleteResultsBtn) return;
+    const user = auth.currentUser;
+    if (!user) {
+        elements.deleteResultsMessage.textContent = 'Please sign in again before deleting.';
+        elements.deleteResultsMessage.className = 'small mt-2 text-danger';
+        return;
+    }
+
+    const { test, results } = pendingDeleteResults;
+    if (elements.deleteResultsConfirmText?.value.trim() !== 'DELETE') {
+        updateDeleteResultsConfirmState();
+        return;
+    }
+
+    const originalHtml = elements.confirmDeleteResultsBtn.innerHTML;
+    elements.confirmDeleteResultsBtn.disabled = true;
+    elements.confirmDeleteResultsBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Deleting...';
+    elements.deleteResultsMessage.textContent = 'Deleting result documents from Firestore...';
+    elements.deleteResultsMessage.className = 'small mt-2 text-muted';
+
+    try {
+        if (!availableSections.some((section) => section.id === test.sectionId)) {
+            throw new Error('You do not have access to delete results for this test.');
+        }
+
+        const operations = results.map((result) => ({ type: 'delete', ref: result.docRef }));
+        operations.push({
+            type: 'set',
+            ref: firestore.collection('resultEditAuditLogs').doc(),
+            data: {
+                actionType: 'test_results_delete',
+                scope: 'test',
+                teacherUid: user.uid || '',
+                teacherEmail: user.email || '',
+                testId: test.id,
+                testName: test.testName || '',
+                sectionId: test.sectionId || '',
+                deletedResultCount: results.length,
+                deletedResultDocIds: results.map((result) => result.docId),
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            },
+        });
+
+        for (let index = 0; index < operations.length; index += 450) {
+            const batch = firestore.batch();
+            operations.slice(index, index + 450).forEach((operation) => {
+                if (operation.type === 'delete') batch.delete(operation.ref);
+                else batch.set(operation.ref, operation.data);
+            });
+            await batch.commit();
+        }
+
+        elements.deleteResultsMessage.textContent = `Deleted ${results.length} result document${results.length === 1 ? '' : 's'}.`;
+        elements.deleteResultsMessage.className = 'small mt-2 text-success';
+        bootstrap.Modal.getInstance(elements.deleteTestResultsModal)?.hide();
+        resetDeleteResultsModal();
+        await loadTests();
+    } catch (error) {
+        console.error('Delete test results:', error);
+        elements.deleteResultsMessage.textContent = error.message || 'Unable to delete test results.';
+        elements.deleteResultsMessage.className = 'small mt-2 text-danger';
+        elements.confirmDeleteResultsBtn.disabled = false;
+    } finally {
+        elements.confirmDeleteResultsBtn.innerHTML = originalHtml;
+        updateDeleteResultsConfirmState();
+    }
+}
+
 async function readFileAsText(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -1524,6 +1704,10 @@ async function loadTests() {
                            data-test-id="${escapeHtml(doc.id)}">
                             <i class="bi bi-upload me-2"></i>Import Bubbles CSV
                         </button>
+                        <button type="button" class="btn btn-outline-danger delete-test-results-btn"
+                           data-test-id="${escapeHtml(doc.id)}">
+                            <i class="bi bi-trash me-2"></i>Delete Results
+                        </button>
                         <input type="file" class="d-none import-bubbles-input" data-test-id="${escapeHtml(doc.id)}" accept=".csv,text/csv">
                     </div>
                     ${subjectButtonsHtml}
@@ -1545,6 +1729,9 @@ async function loadTests() {
                     .find((item) => item.dataset.testId === button.dataset.testId);
                 if (input) input.click();
             });
+        });
+        elements.testsContainer.querySelectorAll('.delete-test-results-btn').forEach((button) => {
+            button.addEventListener('click', () => prepareDeleteTestResults(button.dataset.testId));
         });
         elements.testsContainer.querySelectorAll('.import-bubbles-input').forEach((input) => {
             input.addEventListener('change', () => {
@@ -1576,6 +1763,8 @@ elements.createTestBtn.onclick = () => openCreateTestModal();
 elements.refreshTests.onclick = () => loadTests();
 elements.saveTestEditBtn.onclick = () => saveTestEdit();
 elements.confirmBubbleImportBtn.onclick = () => confirmStudentBubblesImport();
+if (elements.confirmDeleteResultsBtn) elements.confirmDeleteResultsBtn.onclick = () => confirmDeleteTestResults();
+if (elements.deleteResultsConfirmText) elements.deleteResultsConfirmText.oninput = () => updateDeleteResultsConfirmState();
 elements.sectionSelect.onchange = async (event) => {
     const nextSectionId = event.target.value;
     if (!nextSectionId || nextSectionId === currentSectionId) return;

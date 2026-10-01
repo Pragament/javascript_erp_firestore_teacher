@@ -15,7 +15,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simple-datatables@9.0.0/dist/style.css">
-    <link rel="stylesheet" href="style.css?v=2026.10.01.8">
+    <link rel="stylesheet" href="style.css?v=2026.10.01.9">
 </head>
 <body>
     <div id="auth-screen" class="container-fluid vh-100 d-flex align-items-center justify-content-center">
@@ -344,6 +344,45 @@
         </div>
     </div>
 
+    <!-- Delete Test Results Preview Modal -->
+    <div class="modal fade" id="deleteTestResultsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header text-white" style="background:#c0392b;">
+                    <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Delete Student Results</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="delete-results-summary" class="alert alert-danger mb-3"></div>
+                    <div id="delete-results-changes" class="alert alert-light border mb-3"></div>
+                    <div class="table-responsive" style="max-height:420px;overflow:auto;">
+                        <table class="table table-sm table-striped align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Firestore Document</th>
+                                    <th>Student</th>
+                                    <th>Roll</th>
+                                    <th>Marks</th>
+                                    <th>Rank</th>
+                                </tr>
+                            </thead>
+                            <tbody id="delete-results-preview-body"></tbody>
+                        </table>
+                    </div>
+                    <label for="delete-results-confirm-text" class="form-label fw-semibold mt-3">Type DELETE to confirm</label>
+                    <input id="delete-results-confirm-text" class="form-control" type="text" autocomplete="off">
+                    <div id="delete-results-message" class="small mt-2 text-muted"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" id="confirm-delete-results-btn" class="btn btn-danger" disabled>
+                        <i class="bi bi-trash me-1"></i>Delete All Results
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bubble Import Preview Modal -->
     <div class="modal fade" id="bubbleImportPreviewModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-xl">
@@ -477,8 +516,8 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script src="utils.js?v=2026.10.01.8"></script>
-    <script src="app.js?v=2026.10.01.8"></script>
-    <script src="version.js?v=2026.10.01.8"></script>
+    <script src="utils.js?v=2026.10.01.9"></script>
+    <script src="app.js?v=2026.10.01.9"></script>
+    <script src="version.js?v=2026.10.01.9"></script>
 </body>
 </html>
