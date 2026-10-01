@@ -52,6 +52,8 @@ const detailContentEl = document.getElementById("question-paper-detail-content")
 const detailSubtitleEl = document.getElementById("question-paper-detail-subtitle");
 const detailSearchEl = document.getElementById("question-detail-search");
 const detailSubjectEl = document.getElementById("question-detail-subject");
+const detailImportCsvBtn = document.getElementById("question-paper-overwrite-csv");
+const detailOverwriteFileEl = document.getElementById("question-paper-overwrite-file");
 const detailExportCsvBtn = document.getElementById("question-paper-export-csv");
 
 let questionPapers = [];
@@ -60,6 +62,7 @@ let currentQuestions = [];
 let currentUser = null;
 let pendingQuestionPaperImport = null;
 let pendingTitlePaper = null;
+let pendingQuestionPaperOverwrite = null;
 
 const QUESTION_PAPER_IMPORT_COLUMNS = [
   "question",
@@ -628,6 +631,254 @@ function buildQuestionDetails(question, index) {
   };
 }
 
+function getQuestionComparisonFields(question) {
+  const details = buildQuestionDetails(question, Number(question?.questionNumber || 0) - 1 || 0);
+  const optionText = (optionNumber) => plainTextFromRichHtml(details.options[optionNumber - 1]?.text || "");
+  return [
+    { key: "question", label: "Question", value: plainTextFromRichHtml(details.questionText) },
+    { key: "option1", label: "Option A", value: optionText(1) },
+    { key: "option2", label: "Option B", value: optionText(2) },
+    { key: "option3", label: "Option C", value: optionText(3) },
+    { key: "option4", label: "Option D", value: optionText(4) },
+    {
+      key: "correct_option",
+      label: "Correct Option",
+      value: details.correctOptions.map((optionNumber) => getOptionLetter(optionNumber)).join(", "),
+    },
+    { key: "subject", label: "Subject", value: details.subject },
+    { key: "chapter", label: "Chapter", value: details.chapter },
+    { key: "topic", label: "Topic", value: details.topic },
+    { key: "subtopic", label: "Subtopic", value: details.subtopic },
+    { key: "class", label: "Class", value: details.className },
+    { key: "correct_answer_logic", label: "Correct Answer Logic", value: plainTextFromRichHtml(details.explanation) },
+  ];
+}
+
+function getQuestionComparisonMap(question) {
+  return getQuestionComparisonFields(question).reduce((map, field) => {
+    map[field.key] = field;
+    return map;
+  }, {});
+}
+
+function getQuestionPaperOverwriteDiffs(importedQuestions) {
+  const existingQuestions = [...(currentQuestionPaper?.questions || [])]
+    .sort((a, b) => getQuestionNumber(a, 0) - getQuestionNumber(b, 0));
+  const maxCount = Math.max(existingQuestions.length, importedQuestions.length);
+  const diffs = [];
+
+  for (let index = 0; index < maxCount; index += 1) {
+    const beforeQuestion = existingQuestions[index] || null;
+    const afterQuestion = importedQuestions[index] || null;
+    const beforeNumber = beforeQuestion ? getQuestionNumber(beforeQuestion, index) : index + 1;
+    const afterNumber = afterQuestion ? getQuestionNumber(afterQuestion, index) : index + 1;
+    const questionNumber = afterQuestion ? afterNumber : beforeNumber;
+
+    if (!beforeQuestion && afterQuestion) {
+      diffs.push({
+        type: "Added",
+        questionNumber,
+        subject: getQuestionSubject(afterQuestion),
+        csvRowNumber: afterQuestion.sourceCsvRowNumber || index + 2,
+        changes: getQuestionComparisonFields(afterQuestion)
+          .filter((field) => normalizeText(field.value))
+          .map((field) => ({ label: field.label, before: "", after: field.value })),
+      });
+      continue;
+    }
+
+    if (beforeQuestion && !afterQuestion) {
+      diffs.push({
+        type: "Removed",
+        questionNumber,
+        subject: getQuestionSubject(beforeQuestion),
+        csvRowNumber: "",
+        changes: getQuestionComparisonFields(beforeQuestion)
+          .filter((field) => normalizeText(field.value))
+          .map((field) => ({ label: field.label, before: field.value, after: "" })),
+      });
+      continue;
+    }
+
+    if (!beforeQuestion || !afterQuestion) continue;
+
+    const beforeMap = getQuestionComparisonMap(beforeQuestion);
+    const afterMap = getQuestionComparisonMap(afterQuestion);
+    const changes = QUESTION_PAPER_IMPORT_COLUMNS
+      .map((key) => {
+        const beforeValue = beforeMap[key]?.value || "";
+        const afterValue = afterMap[key]?.value || "";
+        if (normalizeComparable(beforeValue) === normalizeComparable(afterValue)) return null;
+        return {
+          label: afterMap[key]?.label || beforeMap[key]?.label || key,
+          before: beforeValue,
+          after: afterValue,
+        };
+      })
+      .filter(Boolean);
+
+    if (changes.length > 0) {
+      diffs.push({
+        type: "Changed",
+        questionNumber,
+        subject: getQuestionSubject(afterQuestion),
+        csvRowNumber: afterQuestion.sourceCsvRowNumber || index + 2,
+        changes,
+      });
+    }
+  }
+
+  return diffs;
+}
+
+function closeQuestionPaperOverwritePreview() {
+  pendingQuestionPaperOverwrite = null;
+  document.getElementById("question-paper-overwrite-preview-overlay")?.remove();
+  if (detailOverwriteFileEl) detailOverwriteFileEl.value = "";
+}
+
+function renderQuestionPaperOverwritePreview() {
+  document.getElementById("question-paper-overwrite-preview-overlay")?.remove();
+  if (!pendingQuestionPaperOverwrite) return;
+
+  const { fileName, diffs, importedCount, existingCount } = pendingQuestionPaperOverwrite;
+  const differenceCount = diffs.length;
+  const diffRows = diffs.map((diff) => {
+    const details = diff.changes.map((change) => `
+      <div class="question-paper-overwrite-change">
+        <div class="fw-semibold">${escapeHtml(change.label)}</div>
+        <div class="small"><span class="text-muted">Before:</span> ${escapeHtml(change.before || "-")}</div>
+        <div class="small"><span class="text-muted">After:</span> ${escapeHtml(change.after || "-")}</div>
+      </div>
+    `).join("");
+
+    return `
+      <tr>
+        <td class="fw-semibold">Q${escapeHtml(diff.questionNumber)}</td>
+        <td><span class="badge ${diff.type === "Removed" ? "bg-danger" : diff.type === "Added" ? "bg-success" : "bg-warning text-dark"}">${escapeHtml(diff.type)}</span></td>
+        <td>${escapeHtml(diff.subject || "-")}</td>
+        <td>${details}</td>
+        <td>${escapeHtml(diff.csvRowNumber || "-")}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const overlay = document.createElement("div");
+  overlay.id = "question-paper-overwrite-preview-overlay";
+  overlay.className = "question-detail-overlay";
+  overlay.innerHTML = `
+    <div class="question-detail-dialog question-paper-overwrite-dialog" role="dialog" aria-modal="true" aria-labelledby="question-paper-overwrite-preview-title">
+      <div class="question-detail-header">
+        <div>
+          <h5 id="question-paper-overwrite-preview-title" class="mb-1">Preview Question Paper CSV Overwrite</h5>
+          <div class="text-muted small">${escapeHtml(fileName)} - ${differenceCount} difference${differenceCount === 1 ? "" : "s"} from ${importedCount} imported question${importedCount === 1 ? "" : "s"}</div>
+        </div>
+        <button type="button" class="question-detail-close" aria-label="Close preview" data-overwrite-close>&times;</button>
+      </div>
+      <div class="question-detail-body">
+        <div class="alert ${differenceCount > 0 ? "alert-warning" : "alert-info"} py-2">
+          Existing paper has ${existingCount} question${existingCount === 1 ? "" : "s"}. Confirming will replace the full questions list with the uploaded CSV.
+        </div>
+        ${differenceCount > 0 ? `
+          <div class="question-paper-overwrite-table-wrap table-responsive">
+            <table class="table table-sm table-bordered align-middle question-paper-overwrite-table mb-0">
+              <thead>
+                <tr>
+                  <th style="width:72px">Question</th>
+                  <th style="width:96px">Type</th>
+                  <th style="width:150px">Subject</th>
+                  <th>Differences</th>
+                  <th style="width:90px">CSV Row</th>
+                </tr>
+              </thead>
+              <tbody>${diffRows}</tbody>
+            </table>
+          </div>
+        ` : `
+          <p class="mb-0">No differences found. Firestore will not be changed.</p>
+        `}
+        <div class="d-flex flex-column flex-sm-row justify-content-end gap-2 mt-3">
+          <button type="button" class="btn btn-secondary" data-overwrite-close>Cancel</button>
+          <button type="button" class="btn" style="background:#16a085;color:white;border:none" data-overwrite-confirm ${differenceCount === 0 ? "disabled" : ""}>
+            <i class="bi bi-check2-circle me-1"></i>Confirm Overwrite
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll("[data-overwrite-close]").forEach((button) => {
+    button.addEventListener("click", closeQuestionPaperOverwritePreview);
+  });
+  overlay.querySelector("[data-overwrite-confirm]")?.addEventListener("click", confirmQuestionPaperOverwriteImport);
+}
+
+async function previewQuestionPaperOverwriteImport(file) {
+  if (!file) return;
+
+  try {
+    const csvText = await file.text();
+    const records = getCSVRecords(csvText);
+    const questions = records.map(buildQuestionFromImportRecord);
+    validateImportedQuestions(questions);
+    const importData = buildImportedPaperPreviewData(getPaperTitle(currentQuestionPaper), questions);
+    const diffs = getQuestionPaperOverwriteDiffs(questions);
+
+    pendingQuestionPaperOverwrite = {
+      ...importData,
+      fileName: file.name || "uploaded.csv",
+      diffs,
+      importedCount: questions.length,
+      existingCount: currentQuestionPaper?.questions?.length || 0,
+    };
+    renderQuestionPaperOverwritePreview();
+  } catch (error) {
+    pendingQuestionPaperOverwrite = null;
+    if (detailOverwriteFileEl) detailOverwriteFileEl.value = "";
+    alert(error.message?.replace(/<br>/g, "\n") || "Unable to preview CSV.");
+  }
+}
+
+async function confirmQuestionPaperOverwriteImport(event) {
+  if (!pendingQuestionPaperOverwrite || !currentQuestionPaper || !currentUser) return;
+
+  const button = event?.currentTarget || null;
+  const originalHtml = button?.innerHTML || "";
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+  }
+
+  try {
+    const updates = {
+      class: pendingQuestionPaperOverwrite.classes.join(", "),
+      subjects: pendingQuestionPaperOverwrite.subjects,
+      questions: pendingQuestionPaperOverwrite.questions,
+      importedFrom: "csv-overwrite",
+      lastOverwriteFileName: pendingQuestionPaperOverwrite.fileName,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.email || "",
+    };
+
+    await firestore.collection("questionpapers").doc(currentQuestionPaper.id).set(updates, { merge: true });
+
+    currentQuestionPaper = { ...currentQuestionPaper, ...updates };
+    currentQuestions = pendingQuestionPaperOverwrite.questions
+      .map(buildQuestionDetails)
+      .sort((a, b) => a.questionNumber - b.questionNumber);
+    if (detailExportCsvBtn) detailExportCsvBtn.disabled = currentQuestions.length === 0;
+    renderSubjectOptions();
+    renderQuestionPaperDetail();
+    closeQuestionPaperOverwritePreview();
+  } catch (error) {
+    console.error("Overwrite question paper from CSV:", error);
+    alert(error.message || "Unable to overwrite question paper.");
+    if (button) button.disabled = false;
+  } finally {
+    if (button) button.innerHTML = originalHtml || '<i class="bi bi-check2-circle me-1"></i>Confirm Overwrite';
+  }
+}
+
 function sortPapers(papers) {
   const sortValue = listSortEl?.value || "name-asc";
   return [...papers].sort((a, b) => {
@@ -943,6 +1194,7 @@ async function loadQuestionPaperDetail() {
     currentQuestions = (currentQuestionPaper.questions || [])
       .map(buildQuestionDetails)
       .sort((a, b) => a.questionNumber - b.questionNumber);
+    if (detailImportCsvBtn) detailImportCsvBtn.disabled = false;
     if (detailExportCsvBtn) detailExportCsvBtn.disabled = currentQuestions.length === 0;
     renderSubjectOptions();
     renderQuestionPaperDetail();
@@ -1004,6 +1256,11 @@ if (listContentEl) {
 if (detailContentEl) {
   detailSearchEl?.addEventListener("input", renderQuestionPaperDetail);
   detailSubjectEl?.addEventListener("change", renderQuestionPaperDetail);
+  detailImportCsvBtn?.addEventListener("click", () => detailOverwriteFileEl?.click());
+  detailOverwriteFileEl?.addEventListener("change", () => {
+    const file = detailOverwriteFileEl.files?.[0] || null;
+    previewQuestionPaperOverwriteImport(file);
+  });
   detailExportCsvBtn?.addEventListener("click", exportQuestionPaperCSV);
   requireAuthThen(loadQuestionPaperDetail);
 }
