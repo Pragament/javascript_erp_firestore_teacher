@@ -149,6 +149,7 @@ function formatTimestamp(value) {
 
 function getActionLabel(actionType) {
   if (actionType === "answer_key_edit") return "Answer Key";
+  if (actionType === "answer_key_bulk_import") return "Answer Key Import";
   if (actionType === "student_answer_edit") return "Student Answer";
   if (actionType === "test_edit") return "Test";
   if (actionType === "test_create") return "Test Created";
@@ -161,6 +162,9 @@ function getChangeSummary(log) {
     const before = log.before?.correctLetters || "-";
     const after = log.after?.correctLetters || "-";
     return `${before} -> ${after}`;
+  }
+  if (log.actionType === "answer_key_bulk_import") {
+    return `${log.changedQuestionCount || 0} question(s) changed`;
   }
   if (log.actionType === "student_answer_edit") {
     const before = log.before?.status || "-";
@@ -181,6 +185,11 @@ function getDetailText(log) {
     const before = (log.before?.labels || []).join("; ") || log.before?.correctLetters || "-";
     const after = (log.after?.labels || []).join("; ") || log.after?.correctLetters || "-";
     return `Correct answer changed from ${before} to ${after}. Affected results: ${log.affectedResultCount || 0}.`;
+  }
+  if (log.actionType === "answer_key_bulk_import") {
+    const changes = (log.changes || []).slice(0, 12).map((change) => `Q${change.questionNumber}: ${change.before || "-"} -> ${change.after || "-"}`).join("; ");
+    const more = (log.changes || []).length > 12 ? `; ...and ${(log.changes || []).length - 12} more` : "";
+    return `Imported answer key from ${log.fileName || "CSV"}. ${changes}${more}. Affected results: ${log.affectedResultCount || 0}.`;
   }
   if (log.actionType === "student_answer_edit") {
     return `Student answer for ${log.statusKey || "question"} changed from ${log.before?.status || "-"} to ${log.after?.status || "-"}. Correct: ${log.correctLetters || "-"}.`;

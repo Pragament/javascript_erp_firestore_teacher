@@ -41,6 +41,8 @@ const testSelectEl = document.getElementById("test-select");
 const sortSelectEl = document.getElementById("sort-select");
 const subjectSelectEl = document.getElementById("subject-select");
 const resultsViewToggleEl = document.getElementById("results-view-toggle");
+const answerKeyImportBtn = document.getElementById("answer-key-import-btn");
+const answerKeyImportFileEl = document.getElementById("answer-key-import-file");
 const tableScoreControlsEl = document.getElementById("table-score-controls");
 const scoreCorrectInput = document.getElementById("scoreCorrect");
 const scoreWrongInput = document.getElementById("scoreWrong");
@@ -55,6 +57,7 @@ let currentQuestionPaperData = null;
 let currentResultsView = "table";
 let subjectResultsSort = { key: "rank", direction: "asc" };
 let studentResultsSort = { key: "rank", direction: "asc" };
+let pendingAnswerKeyImport = null;
 
 const DEFAULT_SCORING_RULES = {
   correct: 3,
@@ -159,6 +162,43 @@ function downloadCSV(filename, csv) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function parseCSVText(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  const input = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      row.push(cell);
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => normalizeText(value))) rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+
+  row.push(cell);
+  if (row.some((value) => normalizeText(value))) rows.push(row);
+  return rows;
 }
 
 function getSafeFilenamePart(value, fallback = "results") {
@@ -834,6 +874,316 @@ async function commitBatches(operations) {
       }
     });
     await batch.commit();
+  }
+}
+
+async function readTextFile(file) {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Unable to read file."));
+    reader.readAsText(file);
+  });
+}
+
+function getAnswerKeyQuestionNumber(value) {
+  const match = normalizeText(value).match(/(?:^|\b)q(?:uestion)?\s*(\d+)\b|^(\d+)$/i);
+  return match ? Number(match[1] || match[2]) : null;
+}
+
+function parseAnswerKeyCSV(text) {
+  const rows = parseCSVText(text);
+  if (rows.length === 0) throw new Error("CSV is empty.");
+
+  const firstRow = rows[0].map((cell) => normalizeComparable(cell).replace(/\s+/g, "_"));
+  const hasHeader = firstRow.some((cell) => ["question", "question_number", "q_no", "qno", "correct_option", "answer", "correct_answer"].includes(cell));
+  const questionIndex = hasHeader
+    ? firstRow.findIndex((cell) => ["question", "question_number", "q_no", "qno"].includes(cell))
+    : 0;
+  const answerIndex = hasHeader
+    ? firstRow.findIndex((cell) => ["correct_option", "answer", "correct_answer"].includes(cell))
+    : 1;
+
+  if (questionIndex < 0 || answerIndex < 0) {
+    throw new Error("CSV must include question and correct_option columns, or rows like q1,C.");
+  }
+
+  const records = rows.slice(hasHeader ? 1 : 0)
+    .map((row, index) => {
+      const questionNumber = getAnswerKeyQuestionNumber(row[questionIndex]);
+      const optionNumbers = getOptionNumbersFromValue(row[answerIndex]);
+      return {
+        csvRowNumber: index + (hasHeader ? 2 : 1),
+        questionNumber,
+        optionNumbers,
+        rawQuestion: normalizeText(row[questionIndex]),
+        rawAnswer: normalizeText(row[answerIndex]),
+      };
+    })
+    .filter((record) => record.rawQuestion || record.rawAnswer);
+
+  if (records.length === 0) throw new Error("No answer key rows found in CSV.");
+
+  const invalidRows = records.filter((record) => !record.questionNumber || record.optionNumbers.length === 0);
+  if (invalidRows.length > 0) {
+    throw new Error(`Invalid answer key row(s): ${invalidRows.slice(0, 10).map((row) => row.csvRowNumber).join(", ")}. Use values like q1,C or q12,AB.`);
+  }
+
+  const byQuestionNumber = new Map();
+  records.forEach((record) => byQuestionNumber.set(record.questionNumber, record));
+  return byQuestionNumber;
+}
+
+function getAllQuestionsForCurrentTest() {
+  return getSubjectQuestions(currentTestData, currentQuestionPaperData, "");
+}
+
+function buildAnswerKeyImportChanges(answerKeyByQuestionNumber) {
+  const questions = getAllQuestionsForCurrentTest();
+  const questionByNumber = new Map(questions.map((question) => [question.questionNumber, question]));
+  const missingQuestions = [];
+  const changes = [];
+
+  answerKeyByQuestionNumber.forEach((record, questionNumber) => {
+    const question = questionByNumber.get(questionNumber);
+    if (!question) {
+      missingQuestions.push(questionNumber);
+      return;
+    }
+
+    const beforeOptions = uniqueSortedOptionNumbers(question.correctOptions || []);
+    const afterOptions = uniqueSortedOptionNumbers(record.optionNumbers);
+    if (areSameOptionLetters(getOptionLettersFromNumbers(beforeOptions), getOptionLettersFromNumbers(afterOptions))) return;
+
+    changes.push({
+      question,
+      csvRowNumber: record.csvRowNumber,
+      beforeOptions,
+      afterOptions,
+      beforeLetters: getOptionLettersFromNumbers(beforeOptions).join("").toUpperCase() || "-",
+      afterLetters: getOptionLettersFromNumbers(afterOptions).join("").toUpperCase(),
+    });
+  });
+
+  return {
+    changes: changes.sort((a, b) => a.question.questionNumber - b.question.questionNumber),
+    missingQuestions: missingQuestions.sort((a, b) => a - b),
+    totalRows: answerKeyByQuestionNumber.size,
+  };
+}
+
+async function prepareAnswerKeyCSVImport(file) {
+  if (!file) return;
+
+  try {
+    if (!currentTestData) throw new Error("Test data is still loading.");
+    if (!currentQuestionPaperData && !Array.isArray(currentTestData.questions)) {
+      throw new Error("Question paper data is not available for this test.");
+    }
+
+    const csvText = await readTextFile(file);
+    const answerKeyByQuestionNumber = parseAnswerKeyCSV(csvText);
+    const importPreview = buildAnswerKeyImportChanges(answerKeyByQuestionNumber);
+    pendingAnswerKeyImport = {
+      ...importPreview,
+      fileName: file.name || "",
+    };
+    renderAnswerKeyImportPreview();
+  } catch (error) {
+    console.error("Prepare answer key CSV import:", error);
+    alert(error.message || "Unable to preview answer key CSV.");
+  } finally {
+    if (answerKeyImportFileEl) answerKeyImportFileEl.value = "";
+  }
+}
+
+function renderAnswerKeyImportPreview() {
+  document.querySelector(".answer-key-import-overlay")?.remove();
+  if (!pendingAnswerKeyImport) return;
+
+  const { changes, missingQuestions, totalRows, fileName } = pendingAnswerKeyImport;
+  const overlay = document.createElement("div");
+  overlay.className = "question-detail-overlay answer-key-import-overlay";
+  overlay.innerHTML = `
+    <div class="question-detail-dialog answer-key-import-dialog" role="dialog" aria-modal="true" aria-labelledby="answer-key-import-title">
+      <div class="question-detail-header">
+        <div>
+          <h5 class="mb-1" id="answer-key-import-title">Preview Answer Key Import</h5>
+          <div class="text-muted small">${escapeHtml(fileName || "CSV")} - ${changes.length} difference${changes.length === 1 ? "" : "s"} from ${totalRows} row${totalRows === 1 ? "" : "s"}</div>
+        </div>
+        <button type="button" class="question-detail-close" aria-label="Close answer key import preview">&times;</button>
+      </div>
+      <div class="question-detail-body">
+        ${missingQuestions.length ? `<div class="alert alert-warning py-2">Questions not found and skipped: q${escapeHtml(missingQuestions.slice(0, 20).join(", q"))}${missingQuestions.length > 20 ? "..." : ""}</div>` : ""}
+        ${changes.length ? `
+          <div class="table-responsive answer-key-import-table-wrap">
+            <table class="table table-sm table-bordered align-middle answer-key-import-table">
+              <thead>
+                <tr>
+                  <th>Question</th>
+                  <th>Subject</th>
+                  <th>Before</th>
+                  <th>After</th>
+                  <th>CSV Row</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${changes.map((change) => `
+                  <tr>
+                    <td>Q${escapeHtml(change.question.questionNumber)}</td>
+                    <td>${escapeHtml(change.question.subject || "")}</td>
+                    <td><span class="badge bg-secondary">${escapeHtml(change.beforeLetters)}</span></td>
+                    <td><span class="badge bg-success">${escapeHtml(change.afterLetters)}</span></td>
+                    <td>${escapeHtml(change.csvRowNumber)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+          <div class="small text-muted mt-2">Firestore will be updated only after confirmation. Student right/wrong status, marks, and ranks will be recalculated.</div>
+        ` : `<div class="alert alert-info mb-0">No answer key differences found. Firestore will not be changed.</div>`}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary answer-key-import-cancel">Cancel</button>
+        <button type="button" class="btn btn-success answer-key-import-confirm" ${changes.length ? "" : "disabled"}>
+          <i class="bi bi-check2-circle me-1"></i>Confirm Changes
+        </button>
+      </div>
+    </div>
+  `;
+
+  const close = () => {
+    pendingAnswerKeyImport = null;
+    overlay.remove();
+  };
+  overlay.querySelector(".question-detail-close").addEventListener("click", close);
+  overlay.querySelector(".answer-key-import-cancel").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelector(".answer-key-import-confirm").addEventListener("click", (event) => {
+    confirmAnswerKeyCSVImport(event.currentTarget);
+  });
+  document.body.appendChild(overlay);
+}
+
+async function confirmAnswerKeyCSVImport(confirmButton) {
+  if (!pendingAnswerKeyImport?.changes?.length) return;
+  const user = auth.currentUser;
+  if (!user) {
+    alert("Please sign in again before saving.");
+    return;
+  }
+
+  const originalHtml = confirmButton.innerHTML;
+  confirmButton.disabled = true;
+  confirmButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+
+  try {
+    const teacherSections = await fetchTeacherSections(user.email);
+    const allowedSectionIds = new Set(teacherSections.map((section) => section.id));
+    if (!currentTestData?.sectionId || !allowedSectionIds.has(currentTestData.sectionId)) {
+      throw new Error("You do not have access to update this test.");
+    }
+
+    const changes = pendingAnswerKeyImport.changes;
+    let nextQuestions = null;
+    const operations = [];
+
+    if (currentQuestionPaperData?.id && Array.isArray(currentQuestionPaperData.questions)) {
+      const updatesByRawIndex = new Map(changes.map((change) => [change.question.rawIndex, change]));
+      nextQuestions = currentQuestionPaperData.questions.map((item, index) => {
+        const change = updatesByRawIndex.get(index);
+        return change ? buildUpdatedQuestionRaw(change.question, change.afterOptions) : item;
+      });
+      operations.push({
+        ref: firestore.collection("questionpapers").doc(currentQuestionPaperData.id),
+        data: {
+          questions: nextQuestions,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: user.email || user.uid || "",
+        },
+      });
+      currentQuestionPaperData = { ...currentQuestionPaperData, questions: nextQuestions };
+    } else if (currentTestData?.id && Array.isArray(currentTestData.questions)) {
+      const updatesByRawIndex = new Map(changes.map((change) => [change.question.rawIndex, change]));
+      nextQuestions = currentTestData.questions.map((item, index) => {
+        const change = updatesByRawIndex.get(index);
+        return change ? buildUpdatedQuestionRaw(change.question, change.afterOptions) : item;
+      });
+      operations.push({
+        ref: firestore.collection("tests").doc(currentTestData.id),
+        data: {
+          questions: nextQuestions,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: user.email || user.uid || "",
+        },
+      });
+      currentTestData = { ...currentTestData, questions: nextQuestions };
+    } else {
+      throw new Error("Question paper data is not available for this test.");
+    }
+
+    const nextResults = currentResultsData.map((result) => {
+      const nextResult = { ...result };
+      changes.forEach((change) => {
+        const statusKey = findResultStatusKey(nextResult, change.question);
+        if (statusKey) {
+          nextResult[statusKey] = getRecalculatedQuestionStatus(nextResult[statusKey], change.afterOptions);
+        }
+      });
+      return nextResult;
+    });
+
+    const perResultExtraData = new Map();
+    nextResults.forEach((result) => {
+      const resultKey = result.id || result.studentId;
+      const statusUpdates = {};
+      changes.forEach((change) => {
+        const statusKey = findResultStatusKey(result, change.question);
+        if (statusKey) statusUpdates[statusKey] = result[statusKey];
+      });
+      if (Object.keys(statusUpdates).length > 0) perResultExtraData.set(resultKey, statusUpdates);
+    });
+    operations.push(...buildResultRecalculationOperations(nextResults, getCurrentScoringRules(), perResultExtraData));
+    addAuditLogOperation(operations, {
+      actionType: "answer_key_bulk_import",
+      scope: "test",
+      teacherUid: user.uid || "",
+      teacherEmail: user.email || "",
+      testId: currentTestData?.id || currentTestId || "",
+      testName: currentTestData?.testName || "",
+      sectionId: currentTestData?.sectionId || getSectionIdFromQuery() || "",
+      fileName: pendingAnswerKeyImport.fileName || "",
+      changedQuestionCount: changes.length,
+      affectedResultCount: nextResults.length,
+      changes: changes.map((change) => ({
+        questionNumber: change.question.questionNumber,
+        subject: change.question.subject || "",
+        before: change.beforeLetters,
+        after: change.afterLetters,
+      })),
+      scoringRules: getCurrentScoringRules(),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await commitBatches(operations);
+
+    currentResultsData = nextResults;
+    pendingAnswerKeyImport = null;
+    document.querySelector(".answer-key-import-overlay")?.remove();
+    const subjectId = getSubjectIdFromQuery();
+    if (subjectId) {
+      renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
+    } else {
+      renderStudentResults(currentTestData, currentResultsData, currentStudentsData, sortSelectEl?.value || "score-desc");
+    }
+  } catch (error) {
+    console.error("Confirm answer key CSV import:", error);
+    alert(error.message || "Unable to import answer key CSV.");
+    confirmButton.disabled = false;
+    confirmButton.innerHTML = originalHtml;
   }
 }
 
@@ -2449,6 +2799,14 @@ async function initializePage() {
         });
       });
       setResultsViewToggleVisible(false);
+    }
+    if (answerKeyImportBtn && answerKeyImportFileEl && !answerKeyImportBtn.dataset.bound) {
+      answerKeyImportBtn.dataset.bound = "true";
+      answerKeyImportBtn.addEventListener("click", () => answerKeyImportFileEl.click());
+      answerKeyImportFileEl.addEventListener("change", () => {
+        const file = answerKeyImportFileEl.files?.[0] || null;
+        if (file) prepareAnswerKeyCSVImport(file);
+      });
     }
     [scoreCorrectInput, scoreWrongInput, scoreSkippedInput].forEach((input) => {
       if (!input || input.dataset.bound) return;
