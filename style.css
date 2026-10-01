@@ -131,6 +131,8 @@
 .question-paper-import-preview-table{max-height:420px;overflow:auto}.question-paper-import-preview-table th{background:#f8f9fa;color:#2c3e50;position:sticky;top:0;z-index:1}.question-paper-import-preview-table td{vertical-align:top;min-width:120px}
 .bubble-preview-question-header{text-align:center;white-space:nowrap}.bubble-preview-answer-cell{text-align:center;font-weight:700;border-radius:4px;min-width:42px}.bubble-preview-correct{background:#d4edda!important;color:#155724}.bubble-preview-wrong{background:#f8d7da!important;color:#721c24}.bubble-preview-skipped{background:#e9ecef!important;color:#495057}
 .answer-key-import-dialog{max-width:860px}.answer-key-import-table-wrap{max-height:55vh;overflow:auto}.answer-key-import-table th{background:#f8f9fa;color:#2c3e50;position:sticky;top:0;z-index:1}.answer-key-import-table td,.answer-key-import-table th{white-space:nowrap}
+.answer-key-import-detail{background:#f8f9fa;border-radius:8px;padding:1rem}.answer-key-option-order-list{display:grid;gap:.5rem}.answer-key-option-order-row{display:grid;grid-template-columns:auto 34px 1fr;gap:.75rem;align-items:flex-start;background:white;border:1px solid #dee2e6;border-radius:8px;padding:.65rem}.answer-key-option-order-actions{display:flex;gap:.25rem}.answer-key-option-order-label{background:#16a085;color:white;border-radius:6px;font-weight:700;text-align:center;padding:.25rem .4rem}.answer-key-option-order-text{min-width:0}
+.answer-key-selected-count{margin-top:.15rem}.answer-key-import-table .form-check-input{cursor:pointer}
 .audit-pagination{background:white;border:1px solid #dee2e6;border-radius:8px;padding:.75rem 1rem}
 
 /* Calendar Styles */

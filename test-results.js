@@ -734,13 +734,19 @@ function setTableScoreControlsVisible(visible) {
   tableScoreControlsEl.classList.toggle("d-none", !visible);
 }
 
-function buildUpdatedQuestionRaw(question, selectedOptionNumbers) {
+function buildUpdatedQuestionRaw(question, selectedOptionNumbers, optionOrder = [1, 2, 3, 4]) {
   const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
+  const nextQuestion = { ...(question.raw || {}) };
+  const orderedOptions = uniqueSortedOptionNumbers(optionOrder).length === 4 ? optionOrder : [1, 2, 3, 4];
+
+  orderedOptions.forEach((originalOptionNumber, index) => {
+    nextQuestion[`Option ${index + 1}`] = question.raw?.[`Option ${originalOptionNumber}`];
+  });
+
   const selectedLetters = getOptionLettersFromNumbers(selectedNumbers);
   const selectedTexts = selectedNumbers
-    .map((optionNumber) => extractOptionText(question.raw?.[`Option ${optionNumber}`]))
+    .map((optionNumber) => extractOptionText(nextQuestion[`Option ${optionNumber}`]))
     .filter(Boolean);
-  const nextQuestion = { ...(question.raw || {}) };
 
   nextQuestion["Correct Option"] = selectedNumbers.length === 1 ? selectedNumbers[0] : selectedNumbers.join(",");
   nextQuestion["Correct Options"] = selectedNumbers;
@@ -961,6 +967,9 @@ function buildAnswerKeyImportChanges(answerKeyByQuestionNumber) {
       csvRowNumber: record.csvRowNumber,
       beforeOptions,
       afterOptions,
+      optionOrder: [1, 2, 3, 4],
+      expanded: false,
+      selected: true,
       beforeLetters: getOptionLettersFromNumbers(beforeOptions).join("").toUpperCase() || "-",
       afterLetters: getOptionLettersFromNumbers(afterOptions).join("").toUpperCase(),
     });
@@ -998,11 +1007,65 @@ async function prepareAnswerKeyCSVImport(file) {
   }
 }
 
+function getAnswerKeyChangeOptionOrder(change) {
+  return Array.isArray(change.optionOrder) && change.optionOrder.length === 4
+    ? change.optionOrder
+    : [1, 2, 3, 4];
+}
+
+function getEffectiveAfterOptionsForChange(change) {
+  const optionOrder = getAnswerKeyChangeOptionOrder(change);
+  return uniqueSortedOptionNumbers((change.afterOptions || []).map((originalOptionNumber) => optionOrder.indexOf(originalOptionNumber) + 1));
+}
+
+function getEffectiveAfterLettersForChange(change) {
+  return getOptionLettersFromNumbers(getEffectiveAfterOptionsForChange(change)).join("").toUpperCase() || "-";
+}
+
+function hasAnswerKeyOptionReorder(change) {
+  return getAnswerKeyChangeOptionOrder(change).some((optionNumber, index) => optionNumber !== index + 1);
+}
+
+function renderAnswerKeyImportOptionRows(change, changeIndex) {
+  const optionOrder = getAnswerKeyChangeOptionOrder(change);
+  const afterOriginalOptions = new Set(change.afterOptions || []);
+  const beforeOriginalOptions = new Set(change.beforeOptions || []);
+
+  return optionOrder.map((originalOptionNumber, index) => {
+    const optionText = change.question.options?.[originalOptionNumber - 1] || extractOptionText(change.question.raw?.[`Option ${originalOptionNumber}`]);
+    const currentLetter = getOptionLetter(index + 1);
+    const originalLetter = getOptionLetter(originalOptionNumber);
+    return `
+      <div class="answer-key-option-order-row">
+        <div class="answer-key-option-order-actions">
+          <button type="button" class="btn btn-sm btn-outline-secondary answer-key-option-move" data-change-index="${escapeHtml(changeIndex)}" data-option-index="${escapeHtml(index)}" data-direction="-1" ${index === 0 ? "disabled" : ""} title="Move up">
+            <i class="bi bi-arrow-up"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary answer-key-option-move" data-change-index="${escapeHtml(changeIndex)}" data-option-index="${escapeHtml(index)}" data-direction="1" ${index === optionOrder.length - 1 ? "disabled" : ""} title="Move down">
+            <i class="bi bi-arrow-down"></i>
+          </button>
+        </div>
+        <div class="answer-key-option-order-label">${escapeHtml(currentLetter)}</div>
+        <div class="answer-key-option-order-text">
+          <div>${renderRichText(optionText || `Option ${originalLetter}`)}</div>
+          <div class="small text-muted">
+            Original ${escapeHtml(originalLetter)}
+            ${beforeOriginalOptions.has(originalOptionNumber) ? '<span class="badge bg-secondary ms-1">Before</span>' : ""}
+            ${afterOriginalOptions.has(originalOptionNumber) ? '<span class="badge bg-success ms-1">Imported Correct</span>' : ""}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderAnswerKeyImportPreview() {
   document.querySelector(".answer-key-import-overlay")?.remove();
   if (!pendingAnswerKeyImport) return;
 
   const { changes, missingQuestions, totalRows, fileName } = pendingAnswerKeyImport;
+  const selectedCount = changes.filter((change) => change.selected !== false).length;
+  const allSelected = changes.length > 0 && selectedCount === changes.length;
   const overlay = document.createElement("div");
   overlay.className = "question-detail-overlay answer-key-import-overlay";
   overlay.innerHTML = `
@@ -1011,6 +1074,7 @@ function renderAnswerKeyImportPreview() {
         <div>
           <h5 class="mb-1" id="answer-key-import-title">Preview Answer Key Import</h5>
           <div class="text-muted small">${escapeHtml(fileName || "CSV")} - ${changes.length} difference${changes.length === 1 ? "" : "s"} from ${totalRows} row${totalRows === 1 ? "" : "s"}</div>
+          ${changes.length ? `<div class="small text-muted answer-key-selected-count">${selectedCount} selected to save</div>` : ""}
         </div>
         <button type="button" class="question-detail-close" aria-label="Close answer key import preview">&times;</button>
       </div>
@@ -1022,32 +1086,62 @@ function renderAnswerKeyImportPreview() {
               <thead>
                 <tr>
                   <th>Question</th>
+                  <th class="text-center">
+                    <input class="form-check-input answer-key-select-all" type="checkbox" ${allSelected ? "checked" : ""} title="Select all">
+                  </th>
                   <th>Subject</th>
                   <th>Before</th>
                   <th>After</th>
                   <th>CSV Row</th>
+                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
-                ${changes.map((change) => `
+                ${changes.map((change, index) => `
                   <tr>
                     <td>Q${escapeHtml(change.question.questionNumber)}</td>
+                    <td class="text-center">
+                      <input class="form-check-input answer-key-change-select" type="checkbox" data-change-index="${escapeHtml(index)}" ${change.selected === false ? "" : "checked"} title="Select Q${escapeHtml(change.question.questionNumber)} to save">
+                    </td>
                     <td>${escapeHtml(change.question.subject || "")}</td>
                     <td><span class="badge bg-secondary">${escapeHtml(change.beforeLetters)}</span></td>
-                    <td><span class="badge bg-success">${escapeHtml(change.afterLetters)}</span></td>
+                    <td>
+                      <span class="badge bg-success">${escapeHtml(getEffectiveAfterLettersForChange(change))}</span>
+                      ${hasAnswerKeyOptionReorder(change) ? '<span class="badge bg-info text-dark ms-1">Options reordered</span>' : ""}
+                    </td>
                     <td>${escapeHtml(change.csvRowNumber)}</td>
+                    <td>
+                      <button type="button" class="btn btn-sm btn-outline-secondary answer-key-detail-toggle" data-change-index="${escapeHtml(index)}">
+                        ${change.expanded ? "Hide" : "Details"}
+                      </button>
+                    </td>
+                  </tr>
+                  <tr class="answer-key-import-detail-row ${change.expanded ? "" : "d-none"}">
+                    <td colspan="7">
+                      <div class="answer-key-import-detail">
+                        <div class="fw-semibold mb-2">Question</div>
+                        <div class="question-detail-text mb-3">${renderRichText(change.question.questionText, "Question text not available.")}</div>
+                        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                          <div class="fw-semibold">Question Options</div>
+                          <div class="small text-muted">Use arrows to change saved option order before confirming.</div>
+                        </div>
+                        <div class="answer-key-option-order-list">
+                          ${renderAnswerKeyImportOptionRows(change, index)}
+                        </div>
+                      </div>
+                    </td>
                   </tr>
                 `).join("")}
               </tbody>
             </table>
           </div>
-          <div class="small text-muted mt-2">Firestore will be updated only after confirmation. Student right/wrong status, marks, and ranks will be recalculated.</div>
+          <div class="small text-muted mt-2">Only selected rows will be saved to Firestore after confirmation. Student right/wrong status, marks, and ranks will be recalculated for saved rows.</div>
         ` : `<div class="alert alert-info mb-0">No answer key differences found. Firestore will not be changed.</div>`}
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary answer-key-import-cancel">Cancel</button>
-        <button type="button" class="btn btn-success answer-key-import-confirm" ${changes.length ? "" : "disabled"}>
-          <i class="bi bi-check2-circle me-1"></i>Confirm Changes
+        <button type="button" class="btn btn-success answer-key-import-confirm" ${selectedCount ? "" : "disabled"}>
+          <i class="bi bi-check2-circle me-1"></i>Confirm ${selectedCount || ""} Change${selectedCount === 1 ? "" : "s"}
         </button>
       </div>
     </div>
@@ -1065,11 +1159,54 @@ function renderAnswerKeyImportPreview() {
   overlay.querySelector(".answer-key-import-confirm").addEventListener("click", (event) => {
     confirmAnswerKeyCSVImport(event.currentTarget);
   });
+  overlay.querySelector(".answer-key-select-all")?.addEventListener("change", (event) => {
+    const checked = event.currentTarget.checked;
+    pendingAnswerKeyImport?.changes?.forEach((change) => {
+      change.selected = checked;
+    });
+    renderAnswerKeyImportPreview();
+  });
+  overlay.querySelectorAll(".answer-key-change-select").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const change = pendingAnswerKeyImport?.changes?.[Number(checkbox.dataset.changeIndex)];
+      if (!change) return;
+      change.selected = checkbox.checked;
+      renderAnswerKeyImportPreview();
+    });
+  });
+  overlay.querySelectorAll(".answer-key-detail-toggle").forEach((button) => {
+    button.addEventListener("click", () => {
+      const change = pendingAnswerKeyImport?.changes?.[Number(button.dataset.changeIndex)];
+      if (!change) return;
+      change.expanded = !change.expanded;
+      renderAnswerKeyImportPreview();
+    });
+  });
+  overlay.querySelectorAll(".answer-key-option-move").forEach((button) => {
+    button.addEventListener("click", () => {
+      const change = pendingAnswerKeyImport?.changes?.[Number(button.dataset.changeIndex)];
+      if (!change) return;
+      const optionIndex = Number(button.dataset.optionIndex);
+      const direction = Number(button.dataset.direction);
+      const nextIndex = optionIndex + direction;
+      const optionOrder = [...getAnswerKeyChangeOptionOrder(change)];
+      if (nextIndex < 0 || nextIndex >= optionOrder.length) return;
+      [optionOrder[optionIndex], optionOrder[nextIndex]] = [optionOrder[nextIndex], optionOrder[optionIndex]];
+      change.optionOrder = optionOrder;
+      change.expanded = true;
+      renderAnswerKeyImportPreview();
+    });
+  });
   document.body.appendChild(overlay);
 }
 
 async function confirmAnswerKeyCSVImport(confirmButton) {
   if (!pendingAnswerKeyImport?.changes?.length) return;
+  const selectedChanges = pendingAnswerKeyImport.changes.filter((change) => change.selected !== false);
+  if (selectedChanges.length === 0) {
+    alert("Select at least one question to save.");
+    return;
+  }
   const user = auth.currentUser;
   if (!user) {
     alert("Please sign in again before saving.");
@@ -1087,7 +1224,7 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
       throw new Error("You do not have access to update this test.");
     }
 
-    const changes = pendingAnswerKeyImport.changes;
+    const changes = selectedChanges;
     let nextQuestions = null;
     const operations = [];
 
@@ -1095,7 +1232,7 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
       const updatesByRawIndex = new Map(changes.map((change) => [change.question.rawIndex, change]));
       nextQuestions = currentQuestionPaperData.questions.map((item, index) => {
         const change = updatesByRawIndex.get(index);
-        return change ? buildUpdatedQuestionRaw(change.question, change.afterOptions) : item;
+        return change ? buildUpdatedQuestionRaw(change.question, getEffectiveAfterOptionsForChange(change), getAnswerKeyChangeOptionOrder(change)) : item;
       });
       operations.push({
         ref: firestore.collection("questionpapers").doc(currentQuestionPaperData.id),
@@ -1110,7 +1247,7 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
       const updatesByRawIndex = new Map(changes.map((change) => [change.question.rawIndex, change]));
       nextQuestions = currentTestData.questions.map((item, index) => {
         const change = updatesByRawIndex.get(index);
-        return change ? buildUpdatedQuestionRaw(change.question, change.afterOptions) : item;
+        return change ? buildUpdatedQuestionRaw(change.question, getEffectiveAfterOptionsForChange(change), getAnswerKeyChangeOptionOrder(change)) : item;
       });
       operations.push({
         ref: firestore.collection("tests").doc(currentTestData.id),
@@ -1130,7 +1267,7 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
       changes.forEach((change) => {
         const statusKey = findResultStatusKey(nextResult, change.question);
         if (statusKey) {
-          nextResult[statusKey] = getRecalculatedQuestionStatus(nextResult[statusKey], change.afterOptions);
+          nextResult[statusKey] = getRecalculatedQuestionStatus(nextResult[statusKey], getEffectiveAfterOptionsForChange(change));
         }
       });
       return nextResult;
@@ -1162,7 +1299,8 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
         questionNumber: change.question.questionNumber,
         subject: change.question.subject || "",
         before: change.beforeLetters,
-        after: change.afterLetters,
+        after: getEffectiveAfterLettersForChange(change),
+        optionOrder: getAnswerKeyChangeOptionOrder(change),
       })),
       scoringRules: getCurrentScoringRules(),
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
