@@ -47,6 +47,8 @@ const tableScoreControlsEl = document.getElementById("table-score-controls");
 const scoreCorrectInput = document.getElementById("scoreCorrect");
 const scoreWrongInput = document.getElementById("scoreWrong");
 const scoreSkippedInput = document.getElementById("scoreSkipped");
+const recalculateResultsBtn = document.getElementById("recalculate-results-btn");
+const recalculateResultsMessageEl = document.getElementById("recalculate-results-message");
 
 let currentTestId = null;
 let availableTests = [];
@@ -734,6 +736,12 @@ function setTableScoreControlsVisible(visible) {
   tableScoreControlsEl.classList.toggle("d-none", !visible);
 }
 
+function setRecalculateResultsMessage(message, type = "muted") {
+  if (!recalculateResultsMessageEl) return;
+  recalculateResultsMessageEl.textContent = message;
+  recalculateResultsMessageEl.className = `small text-${type}`;
+}
+
 function buildUpdatedQuestionRaw(question, selectedOptionNumbers, optionOrder = [1, 2, 3, 4]) {
   const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
   const nextQuestion = { ...(question.raw || {}) };
@@ -880,6 +888,62 @@ async function commitBatches(operations) {
       }
     });
     await batch.commit();
+  }
+}
+
+async function saveRecalculatedResults() {
+  const user = auth.currentUser;
+  if (!user) {
+    setRecalculateResultsMessage("Please sign in again before saving.", "danger");
+    return;
+  }
+
+  if (!currentTestData?.id || currentResultsData.length === 0) {
+    setRecalculateResultsMessage("No results are loaded to recalculate.", "danger");
+    return;
+  }
+
+  const originalHtml = recalculateResultsBtn?.innerHTML || "";
+  if (recalculateResultsBtn) {
+    recalculateResultsBtn.disabled = true;
+    recalculateResultsBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+  }
+  setRecalculateResultsMessage("Saving recalculated marks, ranks, percentile, grade, and GPA...", "muted");
+
+  try {
+    const teacherSections = await fetchTeacherSections(user.email);
+    const allowedSectionIds = new Set(teacherSections.map((section) => section.id));
+    if (!currentTestData.sectionId || !allowedSectionIds.has(currentTestData.sectionId)) {
+      throw new Error("You do not have access to update this test.");
+    }
+
+    const scoringRules = getCurrentScoringRules();
+    const affectedResultCount = currentResultsData.filter((result) => result.id).length;
+    const operations = buildResultRecalculationOperations(currentResultsData, scoringRules);
+    addAuditLogOperation(operations, {
+      actionType: "results_recalculate",
+      scope: "test",
+      teacherUid: user.uid || "",
+      teacherEmail: user.email || "",
+      testId: currentTestData.id || currentTestId || "",
+      testName: currentTestData.testName || "",
+      sectionId: currentTestData.sectionId || getSectionIdFromQuery() || "",
+      affectedResultCount,
+      scoringRules,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await commitBatches(operations);
+    setRecalculateResultsMessage(`Saved recalculated values for ${currentResultsData.length} result${currentResultsData.length === 1 ? "" : "s"}.`, "success");
+    await loadTestResults(currentTestData.id);
+  } catch (error) {
+    console.error("Save recalculated results:", error);
+    setRecalculateResultsMessage(error.message || "Unable to save recalculated results.", "danger");
+  } finally {
+    if (recalculateResultsBtn) {
+      recalculateResultsBtn.disabled = false;
+      recalculateResultsBtn.innerHTML = originalHtml || '<i class="bi bi-arrow-repeat me-1"></i>Save Recalculated Results';
+    }
   }
 }
 
@@ -2946,10 +3010,15 @@ async function initializePage() {
         if (file) prepareAnswerKeyCSVImport(file);
       });
     }
+    if (recalculateResultsBtn && !recalculateResultsBtn.dataset.bound) {
+      recalculateResultsBtn.dataset.bound = "true";
+      recalculateResultsBtn.addEventListener("click", saveRecalculatedResults);
+    }
     [scoreCorrectInput, scoreWrongInput, scoreSkippedInput].forEach((input) => {
       if (!input || input.dataset.bound) return;
       input.dataset.bound = "true";
       input.addEventListener("input", () => {
+        setRecalculateResultsMessage("Table marks, rank, grade, and GPA recalculate using these values.");
         const subjectId = getSubjectIdFromQuery();
         if (currentTestData && currentResultsData.length > 0 && subjectId) {
           renderSubjectResults(currentTestData, currentResultsData, currentStudentsData, currentQuestionPaperData, subjectId);
