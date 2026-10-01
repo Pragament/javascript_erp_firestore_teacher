@@ -1405,7 +1405,7 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
   }
 }
 
-async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl) {
+async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl, optionOrder = [1, 2, 3, 4]) {
   const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
   if (selectedNumbers.length === 0) {
     messageEl.textContent = "Select at least one correct option.";
@@ -1432,7 +1432,8 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
     }
 
     const beforeCorrectOptions = question.correctOptions || [];
-    const updatedQuestionRaw = buildUpdatedQuestionRaw(question, selectedNumbers);
+    const nextOptionOrder = Array.isArray(optionOrder) && optionOrder.length === 4 ? optionOrder : [1, 2, 3, 4];
+    const updatedQuestionRaw = buildUpdatedQuestionRaw(question, selectedNumbers, nextOptionOrder);
     let nextQuestions = null;
     const operations = [];
 
@@ -1495,11 +1496,13 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
         correctOptions: beforeCorrectOptions,
         correctLetters: getOptionLettersFromNumbers(beforeCorrectOptions).join("").toUpperCase(),
         labels: getQuestionCorrectOptionLabels(question, beforeCorrectOptions),
+        optionOrder: [1, 2, 3, 4],
       },
       after: {
         correctOptions: selectedNumbers,
         correctLetters: correctLetters.join("").toUpperCase(),
         labels: getQuestionCorrectOptionLabels(question, selectedNumbers),
+        optionOrder: nextOptionOrder,
       },
       affectedResultCount: nextResults.length,
       scoringRules: getCurrentScoringRules(),
@@ -1906,20 +1909,38 @@ function renderQuestionDetailModal(question) {
   const optionsHtml = question.options.length
     ? `<ol class="mb-0 question-detail-options">${question.options.map((option) => `<li>${renderRichText(option)}</li>`).join("")}</ol>`
     : '<div class="text-muted">No options available.</div>';
-  const correctOptionSet = new Set(correctOptions);
-  const editOptionsHtml = question.options.length
-    ? question.options.map((option, index) => {
-        const optionNumber = index + 1;
-        const checked = correctOptionSet.has(optionNumber) ? "checked" : "";
-        return `
-          <label class="question-detail-option-check">
-            <input type="checkbox" class="form-check-input" value="${optionNumber}" ${checked}>
-            <span>Option ${escapeHtml(optionNumber)}</span>
-            <span class="question-detail-option-text">${renderRichText(option)}</span>
+  let optionOrder = [1, 2, 3, 4];
+  const selectedOriginalOptionSet = new Set(correctOptions);
+  const renderEditOptionsHtml = () => {
+    if (!question.options.length) return '<div class="text-muted">Add options before choosing a correct answer.</div>';
+    return optionOrder.map((originalOptionNumber, index) => {
+      const currentOptionNumber = index + 1;
+      const currentLetter = getOptionLetter(currentOptionNumber);
+      const originalLetter = getOptionLetter(originalOptionNumber);
+      const option = question.options[originalOptionNumber - 1] || extractOptionText(question.raw?.[`Option ${originalOptionNumber}`]);
+      const checked = selectedOriginalOptionSet.has(originalOptionNumber) ? "checked" : "";
+      return `
+        <div class="answer-key-option-order-row question-detail-option-order-row">
+          <div class="answer-key-option-order-actions">
+            <button type="button" class="btn btn-sm btn-outline-secondary question-option-move" data-option-index="${escapeHtml(index)}" data-direction="-1" ${index === 0 ? "disabled" : ""} title="Move up">
+              <i class="bi bi-arrow-up"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary question-option-move" data-option-index="${escapeHtml(index)}" data-direction="1" ${index === optionOrder.length - 1 ? "disabled" : ""} title="Move down">
+              <i class="bi bi-arrow-down"></i>
+            </button>
+          </div>
+          <label class="d-flex gap-2 align-items-start mb-0">
+            <input type="checkbox" class="form-check-input question-correct-option" value="${escapeHtml(originalOptionNumber)}" ${checked}>
+            <span class="answer-key-option-order-label">${escapeHtml(currentLetter)}</span>
+            <span class="answer-key-option-order-text">
+              <span>${renderRichText(option || `Option ${originalLetter}`)}</span>
+              <span class="small text-muted d-block">Original ${escapeHtml(originalLetter)}</span>
+            </span>
           </label>
-        `;
-      }).join("")
-    : '<div class="text-muted">Add options before choosing a correct answer.</div>';
+        </div>
+      `;
+    }).join("");
+  };
 
   const overlay = document.createElement("div");
   overlay.className = "question-detail-overlay";
@@ -1951,8 +1972,11 @@ function renderQuestionDetailModal(question) {
           <div>${correctAnswerHtml}</div>
         </div>
         <div class="question-detail-edit no-print">
-          <div class="fw-semibold mb-2">Edit Correct Option</div>
-          <div class="question-detail-checks">${editOptionsHtml}</div>
+          <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+            <div class="fw-semibold">Edit Correct Option & Option Order</div>
+            <div class="small text-muted">Use arrows to change saved option order.</div>
+          </div>
+          <div class="question-detail-checks question-detail-option-order-list">${renderEditOptionsHtml()}</div>
           <div class="d-flex align-items-center gap-2 flex-wrap mt-3">
             <button type="button" class="btn btn-sm btn-success question-detail-save" ${question.options.length ? "" : "disabled"}>
               <i class="bi bi-save me-1"></i>Save & Recalculate
@@ -1975,12 +1999,37 @@ function renderQuestionDetailModal(question) {
     if (event.target === overlay) close();
   });
   overlay.querySelector(".question-detail-close").addEventListener("click", close);
+  const optionsContainer = overlay.querySelector(".question-detail-option-order-list");
+  const bindOptionOrderControls = () => {
+    optionsContainer?.querySelectorAll(".question-correct-option").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const originalOptionNumber = Number(checkbox.value);
+        if (checkbox.checked) selectedOriginalOptionSet.add(originalOptionNumber);
+        else selectedOriginalOptionSet.delete(originalOptionNumber);
+      });
+    });
+    optionsContainer?.querySelectorAll(".question-option-move").forEach((button) => {
+      button.addEventListener("click", () => {
+        const optionIndex = Number(button.dataset.optionIndex);
+        const direction = Number(button.dataset.direction);
+        const nextIndex = optionIndex + direction;
+        if (nextIndex < 0 || nextIndex >= optionOrder.length) return;
+        [optionOrder[optionIndex], optionOrder[nextIndex]] = [optionOrder[nextIndex], optionOrder[optionIndex]];
+        if (optionsContainer) {
+          optionsContainer.innerHTML = renderEditOptionsHtml();
+          bindOptionOrderControls();
+        }
+      });
+    });
+  };
+  bindOptionOrderControls();
   const saveButton = overlay.querySelector(".question-detail-save");
   const messageEl = overlay.querySelector(".question-detail-save-message");
   saveButton?.addEventListener("click", () => {
-    const selectedOptionNumbers = Array.from(overlay.querySelectorAll(".question-detail-checks input:checked"))
-      .map((input) => input.value);
-    saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl);
+    const selectedOptionNumbers = optionOrder
+      .map((originalOptionNumber, index) => (selectedOriginalOptionSet.has(originalOptionNumber) ? index + 1 : null))
+      .filter(Boolean);
+    saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl, optionOrder);
   });
   document.addEventListener("keydown", function onKeydown(event) {
     if (event.key === "Escape") {
