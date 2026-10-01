@@ -661,6 +661,26 @@ function getQuestionComparisonMap(question) {
   }, {});
 }
 
+function getResultFieldKeyForQuestion(question, fallbackIndex) {
+  if (!question) return "";
+  const rawKey = normalizeText(question.subjectname_questionnumber);
+  if (rawKey) return rawKey.replace(/_(?:Q)?(\d+)$/i, "_Q$1");
+  const questionNumber = getQuestionNumber(question, fallbackIndex);
+  return `${getQuestionSubject(question)}_Q${questionNumber}`;
+}
+
+function getSubjectFieldChange(beforeQuestion, afterQuestion, fallbackIndex) {
+  const beforeKey = getResultFieldKeyForQuestion(beforeQuestion, fallbackIndex);
+  const afterKey = getResultFieldKeyForQuestion(afterQuestion, fallbackIndex);
+  if (!beforeKey || !afterKey || beforeKey === afterKey) return null;
+  return {
+    label: "Firestore Result Field",
+    before: `results/<docId> -> ${beforeKey}`,
+    after: `results/<docId> -> ${afterKey}`,
+    fieldKeyChange: { beforeKey, afterKey },
+  };
+}
+
 function getQuestionPaperOverwriteDiffs(importedQuestions) {
   const existingQuestions = [...(currentQuestionPaper?.questions || [])]
     .sort((a, b) => getQuestionNumber(a, 0) - getQuestionNumber(b, 0));
@@ -675,27 +695,35 @@ function getQuestionPaperOverwriteDiffs(importedQuestions) {
     const questionNumber = afterQuestion ? afterNumber : beforeNumber;
 
     if (!beforeQuestion && afterQuestion) {
+      const afterKey = getResultFieldKeyForQuestion(afterQuestion, index);
       diffs.push({
         type: "Added",
         questionNumber,
         subject: getQuestionSubject(afterQuestion),
         csvRowNumber: afterQuestion.sourceCsvRowNumber || index + 2,
-        changes: getQuestionComparisonFields(afterQuestion)
+        changes: [
+          ...(afterKey ? [{ label: "Firestore Result Field", before: "", after: `results/<docId> -> ${afterKey}` }] : []),
+          ...getQuestionComparisonFields(afterQuestion)
           .filter((field) => normalizeText(field.value))
           .map((field) => ({ label: field.label, before: "", after: field.value })),
+        ],
       });
       continue;
     }
 
     if (beforeQuestion && !afterQuestion) {
+      const beforeKey = getResultFieldKeyForQuestion(beforeQuestion, index);
       diffs.push({
         type: "Removed",
         questionNumber,
         subject: getQuestionSubject(beforeQuestion),
         csvRowNumber: "",
-        changes: getQuestionComparisonFields(beforeQuestion)
+        changes: [
+          ...(beforeKey ? [{ label: "Firestore Result Field", before: `results/<docId> -> ${beforeKey}`, after: "" }] : []),
+          ...getQuestionComparisonFields(beforeQuestion)
           .filter((field) => normalizeText(field.value))
           .map((field) => ({ label: field.label, before: field.value, after: "" })),
+        ],
       });
       continue;
     }
@@ -716,6 +744,8 @@ function getQuestionPaperOverwriteDiffs(importedQuestions) {
         };
       })
       .filter(Boolean);
+    const subjectFieldChange = getSubjectFieldChange(beforeQuestion, afterQuestion, index);
+    if (subjectFieldChange) changes.unshift(subjectFieldChange);
 
     if (changes.length > 0) {
       diffs.push({
@@ -731,6 +761,24 @@ function getQuestionPaperOverwriteDiffs(importedQuestions) {
   return diffs;
 }
 
+function getQuestionPaperOverwriteFieldMigrations(importedQuestions) {
+  const existingQuestions = [...(currentQuestionPaper?.questions || [])]
+    .sort((a, b) => getQuestionNumber(a, 0) - getQuestionNumber(b, 0));
+  return importedQuestions
+    .map((afterQuestion, index) => {
+      const beforeQuestion = existingQuestions[index] || null;
+      const beforeKey = getResultFieldKeyForQuestion(beforeQuestion, index);
+      const afterKey = getResultFieldKeyForQuestion(afterQuestion, index);
+      if (!beforeKey || !afterKey || beforeKey === afterKey) return null;
+      return {
+        questionNumber: getQuestionNumber(afterQuestion, index),
+        beforeKey,
+        afterKey,
+      };
+    })
+    .filter(Boolean);
+}
+
 function closeQuestionPaperOverwritePreview() {
   pendingQuestionPaperOverwrite = null;
   document.getElementById("question-paper-overwrite-preview-overlay")?.remove();
@@ -741,8 +789,9 @@ function renderQuestionPaperOverwritePreview() {
   document.getElementById("question-paper-overwrite-preview-overlay")?.remove();
   if (!pendingQuestionPaperOverwrite) return;
 
-  const { fileName, diffs, importedCount, existingCount } = pendingQuestionPaperOverwrite;
+  const { fileName, diffs, fieldMigrations, importedCount, existingCount } = pendingQuestionPaperOverwrite;
   const differenceCount = diffs.length;
+  const fieldMigrationCount = fieldMigrations?.length || 0;
   const diffRows = diffs.map((diff) => {
     const details = diff.changes.map((change) => `
       <div class="question-paper-overwrite-change">
@@ -778,6 +827,7 @@ function renderQuestionPaperOverwritePreview() {
       <div class="question-detail-body">
         <div class="alert ${differenceCount > 0 ? "alert-warning" : "alert-info"} py-2">
           Existing paper has ${existingCount} question${existingCount === 1 ? "" : "s"}. Confirming will replace the full questions list with the uploaded CSV.
+          ${fieldMigrationCount > 0 ? `<div class="mt-1">Subject changes will also migrate ${fieldMigrationCount} result field key${fieldMigrationCount === 1 ? "" : "s"} such as <span class="fw-semibold">results/&lt;docId&gt; -&gt; Subject_Qn</span>.</div>` : ""}
         </div>
         ${differenceCount > 0 ? `
           <div class="question-paper-overwrite-table-wrap table-responsive">
@@ -823,11 +873,13 @@ async function previewQuestionPaperOverwriteImport(file) {
     validateImportedQuestions(questions);
     const importData = buildImportedPaperPreviewData(getPaperTitle(currentQuestionPaper), questions);
     const diffs = getQuestionPaperOverwriteDiffs(questions);
+    const fieldMigrations = getQuestionPaperOverwriteFieldMigrations(questions);
 
     pendingQuestionPaperOverwrite = {
       ...importData,
       fileName: file.name || "uploaded.csv",
       diffs,
+      fieldMigrations,
       importedCount: questions.length,
       existingCount: currentQuestionPaper?.questions?.length || 0,
     };
@@ -837,6 +889,65 @@ async function previewQuestionPaperOverwriteImport(file) {
     if (detailOverwriteFileEl) detailOverwriteFileEl.value = "";
     alert(error.message?.replace(/<br>/g, "\n") || "Unable to preview CSV.");
   }
+}
+
+async function fetchTestsForCurrentQuestionPaper() {
+  const paperIds = [
+    currentQuestionPaper?.id,
+    currentQuestionPaper?.questionPaperID,
+  ].map(normalizeText).filter(Boolean);
+  const uniquePaperIds = [...new Set(paperIds)];
+  const testsById = new Map();
+
+  for (const paperId of uniquePaperIds) {
+    const snapshot = await firestore.collection("tests").where("questionPaperID", "==", paperId).get();
+    snapshot.docs.forEach((doc) => testsById.set(doc.id, { id: doc.id, ...doc.data() }));
+  }
+
+  return Array.from(testsById.values());
+}
+
+async function migrateQuestionPaperResultFields(fieldMigrations) {
+  if (!fieldMigrations?.length) return 0;
+
+  const tests = await fetchTestsForCurrentQuestionPaper();
+  let migratedResultCount = 0;
+  let batch = firestore.batch();
+  let operationCount = 0;
+
+  const commitIfNeeded = async (force = false) => {
+    if (operationCount === 0 || (!force && operationCount < 450)) return;
+    await batch.commit();
+    batch = firestore.batch();
+    operationCount = 0;
+  };
+
+  for (const test of tests) {
+    const resultsSnapshot = await firestore.collection("results").where("testId", "==", test.id).get();
+    for (const doc of resultsSnapshot.docs) {
+      const result = doc.data() || {};
+      const updates = {};
+
+      fieldMigrations.forEach((migration) => {
+        if (!Object.prototype.hasOwnProperty.call(result, migration.beforeKey)) return;
+        updates[migration.afterKey] = result[migration.beforeKey];
+        updates[migration.beforeKey] = firebase.firestore.FieldValue.delete();
+      });
+
+      if (Object.keys(updates).length === 0) continue;
+      updates.questionPaperFieldMigratedAt = firebase.firestore.FieldValue.serverTimestamp();
+      updates.questionPaperFieldMigratedBy = currentUser?.email || "";
+      batch.update(doc.ref, updates);
+      operationCount += 1;
+      migratedResultCount += 1;
+      await commitIfNeeded();
+    }
+
+    await commitIfNeeded();
+  }
+
+  await commitIfNeeded(true);
+  return migratedResultCount;
 }
 
 async function confirmQuestionPaperOverwriteImport(event) {
@@ -861,6 +972,7 @@ async function confirmQuestionPaperOverwriteImport(event) {
     };
 
     await firestore.collection("questionpapers").doc(currentQuestionPaper.id).set(updates, { merge: true });
+    await migrateQuestionPaperResultFields(pendingQuestionPaperOverwrite.fieldMigrations || []);
 
     currentQuestionPaper = { ...currentQuestionPaper, ...updates };
     currentQuestions = pendingQuestionPaperOverwrite.questions

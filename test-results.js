@@ -1621,6 +1621,8 @@ function renderStudentAnswerEditModal({ result, studentName, roll, question, raw
   const existing = document.querySelector(".question-detail-overlay");
   if (existing) existing.remove();
 
+  const statusKey = findResultStatusKey(result, question) || getDefaultResultStatusKey(question);
+  const resultDocId = result.id || `${currentTestData?.id || currentTestId || ""}_${result.studentId || ""}`;
   const correctOptionSet = new Set(question.correctOptions || []);
   const selectedOptionSet = new Set(getStudentOptionNumbersFromStatus(rawStatus, question.correctOptions || []));
   const isSkipped = isSkippedStatus(rawStatus) || !rawStatus || rawStatus === "-";
@@ -1647,6 +1649,9 @@ function renderStudentAnswerEditModal({ result, studentName, roll, question, raw
         <div>
           <h5 class="mb-1" id="student-answer-title">Edit Q${escapeHtml(question.questionNumber)} Answer</h5>
           <div class="text-muted small">${escapeHtml(studentName)}${roll ? ` | Roll ${escapeHtml(roll)}` : ""}</div>
+          <div class="text-muted small">
+            Firestore: results/${escapeHtml(resultDocId || "-")} &rarr; ${escapeHtml(statusKey)} = <span class="fw-semibold">${escapeHtml(rawStatus || "-")}</span>
+          </div>
         </div>
         <button type="button" class="question-detail-close" aria-label="Close answer editor">&times;</button>
       </div>
