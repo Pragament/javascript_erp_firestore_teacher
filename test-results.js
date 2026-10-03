@@ -368,6 +368,26 @@ function areSameOptionLetters(a, b) {
   return left === right;
 }
 
+function getCorrectAnswerSelectionMode(question) {
+  const mode = normalizeComparable(
+    question?.correctAnswerSelectionMode ||
+    question?.answerSelectionMode ||
+    question?.multiAnswerMode ||
+    question?.["Correct Answer Selection Mode"]
+  );
+  return mode === "any" ? "any" : "all";
+}
+
+function isCorrectSelection(selectedLetters, correctLetters, selectionMode = "all") {
+  const selectedSet = new Set(selectedLetters || []);
+  const correctSet = new Set(correctLetters || []);
+  if (selectedSet.size === 0 || correctSet.size === 0) return false;
+  if (selectionMode === "any") {
+    return [...selectedSet].every((letter) => correctSet.has(letter));
+  }
+  return areSameOptionLetters([...selectedSet], [...correctSet]);
+}
+
 function buildRightStatus(optionLetters) {
   const suffix = [...new Set(optionLetters || [])].sort().join("");
   return suffix ? `r_${suffix}` : "r";
@@ -382,7 +402,7 @@ function getSelectedOptionLettersFromStatus(status) {
   return getOptionLettersFromNumbers(getOptionNumbersFromValue(answerPart));
 }
 
-function getRecalculatedQuestionStatus(rawStatus, correctOptionNumbers) {
+function getRecalculatedQuestionStatus(rawStatus, correctOptionNumbers, selectionMode = "all") {
   if (isSkippedStatus(rawStatus)) return "s";
 
   const selectedLetters = getSelectedOptionLettersFromStatus(rawStatus);
@@ -392,7 +412,7 @@ function getRecalculatedQuestionStatus(rawStatus, correctOptionNumbers) {
     return isRightStatus(rawStatus) ? buildRightStatus(correctLetters) : normalizeComparable(rawStatus);
   }
 
-  return areSameOptionLetters(selectedLetters, correctLetters)
+  return isCorrectSelection(selectedLetters, correctLetters, selectionMode)
     ? buildRightStatus(selectedLetters)
     : selectedLetters.join("");
 }
@@ -403,12 +423,12 @@ function getStudentOptionNumbersFromStatus(status, correctOptionNumbers = []) {
   return isRightStatus(status) ? uniqueSortedOptionNumbers(correctOptionNumbers) : [];
 }
 
-function buildStudentAnswerStatus(selectedOptionNumbers, correctOptionNumbers, skipped = false) {
+function buildStudentAnswerStatus(selectedOptionNumbers, correctOptionNumbers, skipped = false, selectionMode = "all") {
   if (skipped) return "s";
   const selectedLetters = getOptionLettersFromNumbers(selectedOptionNumbers);
   const correctLetters = getOptionLettersFromNumbers(correctOptionNumbers);
   if (selectedLetters.length === 0) return "s";
-  return areSameOptionLetters(selectedLetters, correctLetters)
+  return isCorrectSelection(selectedLetters, correctLetters, selectionMode)
     ? buildRightStatus(selectedLetters)
     : selectedLetters.join("");
 }
@@ -510,6 +530,7 @@ function buildQuestionDetails(question, index) {
       .filter(Boolean),
     correctOption: correctOptions[0] || null,
     correctOptions,
+    correctAnswerSelectionMode: getCorrectAnswerSelectionMode(question),
     explanation: normalizeText(question?.feedbackCorrectAnswer || question?.feedback || question?.explanation || question?.solution),
     raw: question,
   };
@@ -742,10 +763,11 @@ function setRecalculateResultsMessage(message, type = "muted") {
   recalculateResultsMessageEl.className = `small text-${type}`;
 }
 
-function buildUpdatedQuestionRaw(question, selectedOptionNumbers, optionOrder = [1, 2, 3, 4]) {
+function buildUpdatedQuestionRaw(question, selectedOptionNumbers, optionOrder = [1, 2, 3, 4], selectionMode = "all") {
   const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
   const nextQuestion = { ...(question.raw || {}) };
   const orderedOptions = uniqueSortedOptionNumbers(optionOrder).length === 4 ? optionOrder : [1, 2, 3, 4];
+  const normalizedSelectionMode = selectedNumbers.length > 1 && selectionMode === "any" ? "any" : "all";
 
   orderedOptions.forEach((originalOptionNumber, index) => {
     nextQuestion[`Option ${index + 1}`] = question.raw?.[`Option ${originalOptionNumber}`];
@@ -758,6 +780,9 @@ function buildUpdatedQuestionRaw(question, selectedOptionNumbers, optionOrder = 
 
   nextQuestion["Correct Option"] = selectedNumbers.length === 1 ? selectedNumbers[0] : selectedNumbers.join(",");
   nextQuestion["Correct Options"] = selectedNumbers;
+  nextQuestion.correctAnswerSelectionMode = normalizedSelectionMode;
+  nextQuestion.answerSelectionMode = normalizedSelectionMode;
+  nextQuestion["Correct Answer Selection Mode"] = normalizedSelectionMode;
   nextQuestion.CorrectAnswer = selectedLetters.join("").toUpperCase();
   nextQuestion.correctAnswer = selectedLetters.join("");
   if (selectedTexts.length > 0) nextQuestion.Answer = selectedTexts.join(" | ");
@@ -1405,13 +1430,14 @@ async function confirmAnswerKeyCSVImport(confirmButton) {
   }
 }
 
-async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl, optionOrder = [1, 2, 3, 4]) {
+async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl, optionOrder = [1, 2, 3, 4], selectionMode = "all") {
   const selectedNumbers = uniqueSortedOptionNumbers(selectedOptionNumbers);
   if (selectedNumbers.length === 0) {
     messageEl.textContent = "Select at least one correct option.";
     messageEl.className = "question-detail-save-message text-danger";
     return;
   }
+  const normalizedSelectionMode = selectedNumbers.length > 1 && selectionMode === "any" ? "any" : "all";
 
   const user = auth.currentUser;
   if (!user) {
@@ -1432,8 +1458,9 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
     }
 
     const beforeCorrectOptions = question.correctOptions || [];
+    const beforeSelectionMode = question.correctAnswerSelectionMode || "all";
     const nextOptionOrder = Array.isArray(optionOrder) && optionOrder.length === 4 ? optionOrder : [1, 2, 3, 4];
-    const updatedQuestionRaw = buildUpdatedQuestionRaw(question, selectedNumbers, nextOptionOrder);
+    const updatedQuestionRaw = buildUpdatedQuestionRaw(question, selectedNumbers, nextOptionOrder, normalizedSelectionMode);
     let nextQuestions = null;
     const operations = [];
 
@@ -1478,7 +1505,7 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
       const nextResult = { ...result };
       const statusKey = findResultStatusKey(nextResult, question);
       if (statusKey) {
-        nextResult[statusKey] = getRecalculatedQuestionStatus(nextResult[statusKey], selectedNumbers);
+        nextResult[statusKey] = getRecalculatedQuestionStatus(nextResult[statusKey], selectedNumbers, normalizedSelectionMode);
       }
       return nextResult;
     });
@@ -1497,12 +1524,14 @@ async function saveCorrectOptionsForQuestion(question, selectedOptionNumbers, sa
         correctLetters: getOptionLettersFromNumbers(beforeCorrectOptions).join("").toUpperCase(),
         labels: getQuestionCorrectOptionLabels(question, beforeCorrectOptions),
         optionOrder: [1, 2, 3, 4],
+        selectionMode: beforeSelectionMode,
       },
       after: {
         correctOptions: selectedNumbers,
         correctLetters: correctLetters.join("").toUpperCase(),
         labels: getQuestionCorrectOptionLabels(question, selectedNumbers),
         optionOrder: nextOptionOrder,
+        selectionMode: normalizedSelectionMode,
       },
       affectedResultCount: nextResults.length,
       scoringRules: getCurrentScoringRules(),
@@ -1563,7 +1592,12 @@ async function saveStudentAnswerForQuestion(result, question, selectedOptionNumb
     const statusKey = findResultStatusKey(result, question) || getDefaultResultStatusKey(question);
     const beforeStatus = normalizeText(result[statusKey], "-");
     const beforeSelectedOptions = getStudentOptionNumbersFromStatus(beforeStatus, question.correctOptions || []);
-    const nextStatus = buildStudentAnswerStatus(selectedNumbers, question.correctOptions || [], skipped);
+    const nextStatus = buildStudentAnswerStatus(
+      selectedNumbers,
+      question.correctOptions || [],
+      skipped,
+      question.correctAnswerSelectionMode || "all"
+    );
     const nextResults = currentResultsData.map((item) =>
       (item.id || item.studentId) === resultKey
         ? { ...item, [statusKey]: nextStatus }
@@ -1910,7 +1944,23 @@ function renderQuestionDetailModal(question) {
     ? `<ol class="mb-0 question-detail-options">${question.options.map((option) => `<li>${renderRichText(option)}</li>`).join("")}</ol>`
     : '<div class="text-muted">No options available.</div>';
   let optionOrder = [1, 2, 3, 4];
+  let selectionMode = question.correctAnswerSelectionMode || "all";
   const selectedOriginalOptionSet = new Set(correctOptions);
+  const getCorrectOptionEditSummary = () => {
+    const selectedRows = optionOrder
+      .map((originalOptionNumber, index) => ({
+        originalOptionNumber,
+        currentOptionNumber: index + 1,
+      }))
+      .filter((row) => selectedOriginalOptionSet.has(row.originalOptionNumber));
+
+    if (selectedRows.length === 0) return "No correct option selected.";
+    return selectedRows.map((row) => {
+      const currentLetter = getOptionLetter(row.currentOptionNumber);
+      const originalLetter = getOptionLetter(row.originalOptionNumber);
+      return `Option ${row.currentOptionNumber} (${currentLetter})${row.currentOptionNumber === row.originalOptionNumber ? "" : `, originally ${originalLetter}`}`;
+    }).join("; ");
+  };
   const renderEditOptionsHtml = () => {
     if (!question.options.length) return '<div class="text-muted">Add options before choosing a correct answer.</div>';
     return optionOrder.map((originalOptionNumber, index) => {
@@ -1920,7 +1970,7 @@ function renderQuestionDetailModal(question) {
       const option = question.options[originalOptionNumber - 1] || extractOptionText(question.raw?.[`Option ${originalOptionNumber}`]);
       const checked = selectedOriginalOptionSet.has(originalOptionNumber) ? "checked" : "";
       return `
-        <div class="answer-key-option-order-row question-detail-option-order-row">
+        <div class="answer-key-option-order-row question-detail-option-order-row ${checked ? "question-detail-option-order-correct" : ""}">
           <div class="answer-key-option-order-actions">
             <button type="button" class="btn btn-sm btn-outline-secondary question-option-move" data-option-index="${escapeHtml(index)}" data-direction="-1" ${index === 0 ? "disabled" : ""} title="Move up">
               <i class="bi bi-arrow-up"></i>
@@ -1929,14 +1979,17 @@ function renderQuestionDetailModal(question) {
               <i class="bi bi-arrow-down"></i>
             </button>
           </div>
-          <label class="d-flex gap-2 align-items-start mb-0">
+          <label class="question-detail-correct-toggle mb-0">
             <input type="checkbox" class="form-check-input question-correct-option" value="${escapeHtml(originalOptionNumber)}" ${checked}>
-            <span class="answer-key-option-order-label">${escapeHtml(currentLetter)}</span>
-            <span class="answer-key-option-order-text">
-              <span>${renderRichText(option || `Option ${originalLetter}`)}</span>
-              <span class="small text-muted d-block">Original ${escapeHtml(originalLetter)}</span>
-            </span>
+            <span>Correct</span>
           </label>
+          <div class="answer-key-option-order-label">${escapeHtml(currentLetter)}</div>
+          <div class="answer-key-option-order-text">
+            <div class="fw-semibold">${renderRichText(option || `Option ${originalLetter}`)}</div>
+            <div class="small text-muted">
+              Current Option ${escapeHtml(currentOptionNumber)}${currentOptionNumber === originalOptionNumber ? "" : `, originally Option ${escapeHtml(originalOptionNumber)}`}
+            </div>
+          </div>
         </div>
       `;
     }).join("");
@@ -1970,11 +2023,28 @@ function renderQuestionDetailModal(question) {
         <div class="mb-3">
           <div class="fw-semibold mb-1">Correct Answer</div>
           <div>${correctAnswerHtml}</div>
+          ${correctOptions.length > 1 ? `<div class="small text-muted mt-1">Current marking rule: ${escapeHtml((question.correctAnswerSelectionMode || "all") === "any" ? "Any one correct option is sufficient" : "Student must select all correct options")}</div>` : ""}
         </div>
         <div class="question-detail-edit no-print">
           <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
             <div class="fw-semibold">Edit Correct Option & Option Order</div>
             <div class="small text-muted">Use arrows to change saved option order.</div>
+          </div>
+          <div class="question-detail-correct-summary alert alert-light border py-2 mb-2">
+            <span class="fw-semibold">Currently correct:</span>
+            <span class="question-detail-correct-summary-text">${escapeHtml(getCorrectOptionEditSummary())}</span>
+          </div>
+          <div class="question-detail-selection-mode border rounded p-2 mb-2 ${selectedOriginalOptionSet.size > 1 ? "" : "d-none"}">
+            <div class="fw-semibold small mb-2">For multiple correct options, how should marks be given?</div>
+            <label class="form-check mb-1">
+              <input class="form-check-input question-selection-mode" type="radio" name="question-selection-mode-${escapeHtml(question.questionNumber)}" value="all" ${selectionMode === "any" ? "" : "checked"}>
+              <span class="form-check-label">Student must select all correct options</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input question-selection-mode" type="radio" name="question-selection-mode-${escapeHtml(question.questionNumber)}" value="any" ${selectionMode === "any" ? "checked" : ""}>
+              <span class="form-check-label">Any one correct option is sufficient for full marks</span>
+            </label>
+            <div class="small text-muted mt-1">A wrong option selected along with a correct option will still be marked wrong.</div>
           </div>
           <div class="question-detail-checks question-detail-option-order-list">${renderEditOptionsHtml()}</div>
           <div class="d-flex align-items-center gap-2 flex-wrap mt-3">
@@ -2000,12 +2070,35 @@ function renderQuestionDetailModal(question) {
   });
   overlay.querySelector(".question-detail-close").addEventListener("click", close);
   const optionsContainer = overlay.querySelector(".question-detail-option-order-list");
+  const correctSummaryEl = overlay.querySelector(".question-detail-correct-summary-text");
+  const selectionModeEl = overlay.querySelector(".question-detail-selection-mode");
+  const updateCorrectSummary = () => {
+    if (correctSummaryEl) correctSummaryEl.textContent = getCorrectOptionEditSummary();
+    if (selectionModeEl) {
+      selectionModeEl.classList.toggle("d-none", selectedOriginalOptionSet.size <= 1);
+      if (selectedOriginalOptionSet.size <= 1) {
+        selectionMode = "all";
+        const allInput = selectionModeEl.querySelector('input[value="all"]');
+        if (allInput) allInput.checked = true;
+      }
+    }
+  };
+  overlay.querySelectorAll(".question-selection-mode").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) selectionMode = input.value === "any" ? "any" : "all";
+    });
+  });
   const bindOptionOrderControls = () => {
     optionsContainer?.querySelectorAll(".question-correct-option").forEach((checkbox) => {
       checkbox.addEventListener("change", () => {
         const originalOptionNumber = Number(checkbox.value);
         if (checkbox.checked) selectedOriginalOptionSet.add(originalOptionNumber);
         else selectedOriginalOptionSet.delete(originalOptionNumber);
+        if (optionsContainer) {
+          optionsContainer.innerHTML = renderEditOptionsHtml();
+          bindOptionOrderControls();
+        }
+        updateCorrectSummary();
       });
     });
     optionsContainer?.querySelectorAll(".question-option-move").forEach((button) => {
@@ -2019,6 +2112,7 @@ function renderQuestionDetailModal(question) {
           optionsContainer.innerHTML = renderEditOptionsHtml();
           bindOptionOrderControls();
         }
+        updateCorrectSummary();
       });
     });
   };
@@ -2029,7 +2123,7 @@ function renderQuestionDetailModal(question) {
     const selectedOptionNumbers = optionOrder
       .map((originalOptionNumber, index) => (selectedOriginalOptionSet.has(originalOptionNumber) ? index + 1 : null))
       .filter(Boolean);
-    saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl, optionOrder);
+    saveCorrectOptionsForQuestion(question, selectedOptionNumbers, saveButton, messageEl, optionOrder, selectionMode);
   });
   document.addEventListener("keydown", function onKeydown(event) {
     if (event.key === "Escape") {
