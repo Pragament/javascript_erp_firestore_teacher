@@ -208,6 +208,7 @@ auth.onAuthStateChanged(async (user) => {
         elements.authScreen.classList.add('d-none');
         elements.mainApp.classList.remove('d-none');
         elements.userEmail.textContent = user.email;
+        elements.userEmail.title = user.email || '';
         await initializeApp();
     } else {
         currentUser = null;
