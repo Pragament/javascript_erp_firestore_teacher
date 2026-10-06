@@ -67,6 +67,11 @@ function normalizeComparable(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function getSectionName(sectionId) {
+  const section = allowedSections.find((item) => item.id === sectionId);
+  return section?.name || sectionId || "";
+}
+
 function normalizeAssignedSections(snapshot) {
   const sectionsMap = new Map();
 
@@ -216,6 +221,7 @@ function getLogHaystack(log) {
     log.testName,
     log.testId,
     log.sectionId,
+    getSectionName(log.sectionId),
     log.subject,
     log.chapter,
     log.topic,
@@ -255,7 +261,7 @@ function getSortValue(log, key) {
     case "test":
       return log.testName || log.testId || "";
     case "section":
-      return log.sectionId || "";
+      return getSectionName(log.sectionId);
     case "student":
       return log.studentName || log.studentId || "";
     case "question":
@@ -299,12 +305,24 @@ function populateFilter(select, values, currentValue, firstLabel) {
   ].join("");
 }
 
+function populateSectionFilter(currentValue) {
+  const sortedSections = [...allowedSections].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  sectionFilterEl.innerHTML = [
+    '<option value="">All sections</option>',
+    ...sortedSections.map((section) => `
+      <option value="${escapeHtml(section.id)}"${section.id === currentValue ? " selected" : ""}>
+        ${escapeHtml(section.name || section.id)}
+      </option>
+    `),
+  ].join("");
+}
+
 function populateFilters() {
   const currentAction = actionFilterEl.value;
   const currentSection = sectionFilterEl.value;
   const currentTest = testFilterEl.value;
   populateFilter(actionFilterEl, auditLogs.map((log) => log.actionType), currentAction, "All actions");
-  populateFilter(sectionFilterEl, allowedSections.map((section) => section.id), currentSection, "All sections");
+  populateSectionFilter(currentSection);
   populateFilter(testFilterEl, auditLogs.map((log) => log.testId), currentTest, "All tests");
 }
 
@@ -328,7 +346,7 @@ function renderAuditTable() {
       <td>${escapeHtml(formatTimestamp(log.createdAt))}</td>
       <td><span class="badge bg-light text-dark border">${escapeHtml(getActionLabel(log.actionType))}</span></td>
       <td>${escapeHtml(log.teacherEmail || "-")}</td>
-      <td>${escapeHtml(log.sectionId || "-")}</td>
+      <td>${escapeHtml(getSectionName(log.sectionId) || "-")}</td>
       <td>${escapeHtml(log.testName || log.testId || "-")}</td>
       <td>${escapeHtml(log.studentName || log.studentId || "-")}</td>
       <td>${escapeHtml(log.subject || "-")}</td>

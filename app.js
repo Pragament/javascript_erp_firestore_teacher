@@ -52,6 +52,7 @@ const elements = {
     createTestBtn: document.getElementById('create-test-btn'),
     refreshTests: document.getElementById('refresh-tests'),
     viewStudentsBtn: document.getElementById('view-students-btn'),
+    studentsSectionFilter: document.getElementById('students-section-filter'),
     studentsTableBody: document.getElementById('studentsTableBody'),
     timetableSection: document.getElementById('timetable-section'),
     timetableYearSelect: document.getElementById('timetable-year-select'),
@@ -105,7 +106,9 @@ const elements = {
     editTestName: document.getElementById('edit-test-name'),
     editTestDate: document.getElementById('edit-test-date'),
     editTestSection: document.getElementById('edit-test-section'),
+    editTestQuestionPaperSearch: document.getElementById('edit-test-question-paper-search'),
     editTestQuestionPaper: document.getElementById('edit-test-question-paper'),
+    editTestQuestionPaperSearchHelp: document.getElementById('edit-test-question-paper-search-help'),
     editTestMessage: document.getElementById('edit-test-message'),
     saveTestEditLabel: document.getElementById('save-test-edit-label'),
     saveTestEditBtn: document.getElementById('save-test-edit-btn'),
@@ -128,6 +131,7 @@ const elements = {
 };
 
 let studentsDataTable = null;
+let allStudentsModalRows = [];
 let pendingDeleteResults = null;
 
 // Day order for timetable display
@@ -144,6 +148,7 @@ let questionPaperOptions = [];
 let pendingBubbleImport = null;
 let bubbleImportPreviewSort = { key: 'previewRank', direction: 'asc' };
 let bubbleImportAbsenteeSort = { key: 'roll', direction: 'asc' };
+const QUESTION_PAPER_SEARCH_STORAGE_KEY = 'teacherDashboard.createTest.questionPaperSearch';
 
 // Teacher identifier for timetable matching
 let currentTeacherIdentifier = null;
@@ -442,11 +447,81 @@ function getQuestionPaperOptionLabel(paper) {
     return `${name}${id ? ` - ${id}` : ''}${questionCount}`;
 }
 
+function normalizeQuestionPaperAuthorValue(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function isCurrentUserQuestionPaperAuthor(paper) {
+    if (!paper || !currentUser) return false;
+
+    const authorUid = String(paper.authorUid || paper.author?.uid || '').trim();
+    if (authorUid && currentUser.uid && authorUid === currentUser.uid) return true;
+
+    const currentEmail = normalizeQuestionPaperAuthorValue(currentUser.email);
+    if (!currentEmail) return false;
+    const authorEmail = normalizeQuestionPaperAuthorValue(paper.authorEmail || paper.author?.email || paper.createdBy);
+    return Boolean(authorEmail && authorEmail === currentEmail);
+}
+
+function getStoredQuestionPaperSearchQuery() {
+    try {
+        return localStorage.getItem(QUESTION_PAPER_SEARCH_STORAGE_KEY) || '';
+    } catch (error) {
+        return '';
+    }
+}
+
+function storeQuestionPaperSearchQuery(query) {
+    try {
+        localStorage.setItem(QUESTION_PAPER_SEARCH_STORAGE_KEY, query || '');
+    } catch (error) {
+        console.warn('Unable to save question paper search query:', error);
+    }
+}
+
+function getQuestionPaperSearchQuery() {
+    return (elements.editTestQuestionPaperSearch?.value || '').trim();
+}
+
+function getFilteredQuestionPaperOptions(selectedValue = '') {
+    const query = getQuestionPaperSearchQuery().toLowerCase();
+    const filteredOptions = query
+        ? questionPaperOptions.filter((paper) => getQuestionPaperOptionLabel(paper).toLowerCase().includes(query))
+        : [...questionPaperOptions];
+
+    if (selectedValue && !filteredOptions.some((paper) => (paper.questionPaperID || paper.id || '') === selectedValue)) {
+        const selectedPaper = questionPaperOptions.find((paper) => (paper.questionPaperID || paper.id || '') === selectedValue);
+        if (selectedPaper) filteredOptions.unshift(selectedPaper);
+    }
+
+    return filteredOptions;
+}
+
+function renderQuestionPaperSelectOptions(selectedValue = '') {
+    const filteredOptions = getFilteredQuestionPaperOptions(selectedValue);
+    elements.editTestQuestionPaper.innerHTML = [
+        '<option value="">No question paper</option>',
+        ...filteredOptions.map((paper) => {
+            const value = paper.questionPaperID || paper.id || '';
+            const selected = value === selectedValue ? ' selected' : '';
+            return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(getQuestionPaperOptionLabel(paper))}</option>`;
+        }),
+    ].join('');
+
+    if (elements.editTestQuestionPaperSearchHelp) {
+        const query = getQuestionPaperSearchQuery();
+        elements.editTestQuestionPaperSearchHelp.textContent = query
+            ? `Showing ${filteredOptions.length} of ${questionPaperOptions.length} question papers.`
+            : `${questionPaperOptions.length} question papers available.`;
+    }
+}
+
 async function fetchQuestionPaperOptions() {
     if (questionPaperOptions.length > 0) return questionPaperOptions;
     const snapshot = await firestore.collection('questionpapers').get();
     questionPaperOptions = snapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter(isCurrentUserQuestionPaperAuthor)
         .sort((a, b) => getQuestionPaperOptionLabel(a).localeCompare(getQuestionPaperOptionLabel(b), undefined, { numeric: true }));
     return questionPaperOptions;
 }
@@ -489,14 +564,10 @@ function populateTestEditDropdowns(test) {
         </option>
     `).join('');
 
-    elements.editTestQuestionPaper.innerHTML = [
-        '<option value="">No question paper</option>',
-        ...questionPaperOptions.map((paper) => {
-            const value = paper.questionPaperID || paper.id || '';
-            const selected = value === (test.questionPaperID || '') ? ' selected' : '';
-            return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(getQuestionPaperOptionLabel(paper))}</option>`;
-        }),
-    ].join('');
+    if (elements.editTestQuestionPaperSearch) {
+        elements.editTestQuestionPaperSearch.value = getStoredQuestionPaperSearchQuery();
+    }
+    renderQuestionPaperSelectOptions(test.questionPaperID || '');
 }
 
 async function openTestEditModal(testId) {
@@ -1803,6 +1874,12 @@ async function getResultCount(testId) {
 elements.createTestBtn.onclick = () => openCreateTestModal();
 elements.refreshTests.onclick = () => loadTests();
 elements.saveTestEditBtn.onclick = () => saveTestEdit();
+if (elements.editTestQuestionPaperSearch) {
+    elements.editTestQuestionPaperSearch.addEventListener('input', () => {
+        storeQuestionPaperSearchQuery(getQuestionPaperSearchQuery());
+        renderQuestionPaperSelectOptions(elements.editTestQuestionPaper.value);
+    });
+}
 elements.confirmBubbleImportBtn.onclick = () => confirmStudentBubblesImport();
 if (elements.confirmDeleteResultsBtn) elements.confirmDeleteResultsBtn.onclick = () => confirmDeleteTestResults();
 if (elements.deleteResultsConfirmText) elements.deleteResultsConfirmText.oninput = () => updateDeleteResultsConfirmState();
@@ -1820,6 +1897,66 @@ elements.viewStudentsBtn.onclick = async () => {
     modal.show();
     await loadAndRenderStudents();
 };
+
+function populateStudentsSectionFilter() {
+    if (!elements.studentsSectionFilter) return;
+    const selectedValue = elements.studentsSectionFilter.value || currentSectionId || '';
+    elements.studentsSectionFilter.innerHTML = [
+        '<option value="">All assigned sections</option>',
+        ...availableSections.map((section) => `
+            <option value="${escapeHtml(section.id)}"${section.id === selectedValue ? ' selected' : ''}>
+                ${escapeHtml(section.name || section.id)}
+            </option>
+        `),
+    ].join('');
+    if (selectedValue && availableSections.some((section) => section.id === selectedValue)) {
+        elements.studentsSectionFilter.value = selectedValue;
+    }
+}
+
+function renderStudentsTable(students) {
+    if (studentsDataTable) {
+        studentsDataTable.destroy();
+        studentsDataTable = null;
+    }
+
+    const selectedSectionId = elements.studentsSectionFilter?.value || '';
+    const filteredStudents = selectedSectionId
+        ? students.filter((student) => student.sectionId === selectedSectionId)
+        : students;
+
+    if (filteredStudents.length === 0) {
+        elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No students found</td></tr>';
+        return;
+    }
+
+    elements.studentsTableBody.innerHTML = filteredStudents.map(student => {
+        const progressUrl = `report.html?studentId=${encodeURIComponent(student.id)}`;
+        return `
+            <tr>
+                <td>${escapeHtml(student.name)}</td>
+                <td>${escapeHtml(student.studentId)}</td>
+                <td>${escapeHtml(student.sectionName)}</td>
+                <td>${escapeHtml(student.phone)}</td>
+                <td>
+                    <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none;">
+                        <i class="bi bi-graph-up me-1"></i> Progress
+                    </a>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    const table = document.getElementById('studentsTable');
+    if (table && window.simpleDatatables?.DataTable) {
+        studentsDataTable = new window.simpleDatatables.DataTable(table, {
+            searchable: true,
+            fixedHeight: false,
+            perPage: 25,
+            perPageSelect: [10, 25, 50, 100]
+        });
+    }
+}
 
 // Load students from all assigned sections
 async function loadAllStudents() {
@@ -1853,52 +1990,20 @@ async function loadAllStudents() {
 
 // Load and render students table
 async function loadAndRenderStudents() {
+    populateStudentsSectionFilter();
     elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center"><div class="spinner-border text-success"></div><p class="mt-2 text-muted">Loading students...</p></td></tr>';
     
     try {
-        const students = await loadAllStudents();
-        
-        if (students.length === 0) {
-            elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No students found</td></tr>';
-            return;
-        }
-        
-        const rowsHtml = students.map(student => {
-            const progressUrl = `report.html?studentId=${encodeURIComponent(student.id)}`;
-            return `
-                <tr>
-                    <td>${escapeHtml(student.name)}</td>
-                    <td>${escapeHtml(student.studentId)}</td>
-                    <td>${escapeHtml(student.sectionName)}</td>
-                    <td>${escapeHtml(student.phone)}</td>
-                    <td>
-                        <a href="${progressUrl}" target="_blank" class="btn btn-sm" style="background:#2c3e50;color:white;border:none;">
-                            <i class="bi bi-graph-up me-1"></i> Progress
-                        </a>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-        
-        elements.studentsTableBody.innerHTML = rowsHtml;
-        
-        // Initialize DataTable
-        const table = document.getElementById('studentsTable');
-        if (table && window.simpleDatatables?.DataTable) {
-            if (studentsDataTable) {
-                studentsDataTable.destroy();
-            }
-            studentsDataTable = new window.simpleDatatables.DataTable(table, {
-                searchable: true,
-                fixedHeight: false,
-                perPage: 25,
-                perPageSelect: [10, 25, 50, 100]
-            });
-        }
+        allStudentsModalRows = await loadAllStudents();
+        renderStudentsTable(allStudentsModalRows);
     } catch (error) {
         console.error('Load students:', error);
         elements.studentsTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Error loading students</td></tr>';
     }
+}
+
+if (elements.studentsSectionFilter) {
+    elements.studentsSectionFilter.addEventListener('change', () => renderStudentsTable(allStudentsModalRows));
 }
 
 // Escape HTML helper

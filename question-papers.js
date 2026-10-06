@@ -88,6 +88,33 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function getCurrentUserEmail() {
+  return normalizeText(currentUser?.email).toLowerCase();
+}
+
+function getQuestionPaperAuthorName(paper) {
+  return normalizeText(
+    paper?.author?.displayName
+    || paper?.authorName
+    || paper?.createdByName
+    || paper?.author?.email
+    || paper?.authorEmail
+    || paper?.createdBy,
+    "Unknown author",
+  );
+}
+
+function isQuestionPaperAuthor(paper) {
+  if (!paper || !currentUser) return false;
+  const authorUid = normalizeText(paper.authorUid || paper.author?.uid);
+  if (authorUid && currentUser.uid && authorUid === currentUser.uid) return true;
+
+  const userEmail = getCurrentUserEmail();
+  if (!userEmail) return false;
+  const authorEmail = normalizeText(paper.authorEmail || paper.author?.email || paper.createdBy).toLowerCase();
+  return Boolean(authorEmail && authorEmail === userEmail);
+}
+
 function normalizeText(value, fallback = "") {
   const text = String(value ?? "").trim();
   return text || fallback;
@@ -436,6 +463,11 @@ async function confirmQuestionPaperImport() {
 
   try {
     const docRef = firestore.collection("questionpapers").doc();
+    const author = {
+      uid: currentUser.uid || "",
+      email: currentUser.email || "",
+      displayName: currentUser.displayName || "",
+    };
     const paperData = {
       questionPaperID: docRef.id,
       templateName: pendingQuestionPaperImport.name,
@@ -446,6 +478,10 @@ async function confirmQuestionPaperImport() {
       subjects: pendingQuestionPaperImport.subjects,
       questions: pendingQuestionPaperImport.questions,
       importedFrom: "csv",
+      author,
+      authorUid: author.uid,
+      authorEmail: author.email,
+      authorName: author.displayName,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: currentUser.email || "",
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -865,6 +901,11 @@ function renderQuestionPaperOverwritePreview() {
 
 async function previewQuestionPaperOverwriteImport(file) {
   if (!file) return;
+  if (!isQuestionPaperAuthor(currentQuestionPaper)) {
+    if (detailOverwriteFileEl) detailOverwriteFileEl.value = "";
+    alert("Only the question paper author can overwrite this question paper.");
+    return;
+  }
 
   try {
     const csvText = await file.text();
@@ -952,6 +993,10 @@ async function migrateQuestionPaperResultFields(fieldMigrations) {
 
 async function confirmQuestionPaperOverwriteImport(event) {
   if (!pendingQuestionPaperOverwrite || !currentQuestionPaper || !currentUser) return;
+  if (!isQuestionPaperAuthor(currentQuestionPaper)) {
+    alert("Only the question paper author can overwrite this question paper.");
+    return;
+  }
 
   const button = event?.currentTarget || null;
   const originalHtml = button?.innerHTML || "";
@@ -1022,6 +1067,7 @@ function renderQuestionPaperList() {
         const subjects = getPaperSubjects(paper);
         const questionCount = Array.isArray(paper.questions) ? paper.questions.length : 0;
         const detailUrl = `question-paper-detail.html?id=${encodeURIComponent(paper.id)}`;
+        const canEdit = isQuestionPaperAuthor(paper);
         return `
           <div class="col-12 col-xl-6">
             <div class="test-card h-100">
@@ -1031,11 +1077,16 @@ function renderQuestionPaperList() {
                   <div class="small text-muted">${escapeHtml(getPaperExternalId(paper) || paper.id)}</div>
                 </div>
                 <div class="d-flex align-items-center gap-2">
-                  <button type="button" class="btn btn-sm btn-outline-secondary question-paper-title-edit-btn" data-paper-id="${escapeHtml(paper.id)}" title="Edit title">
-                    <i class="bi bi-pencil-square"></i>
-                  </button>
+                  ${canEdit ? `
+                    <button type="button" class="btn btn-sm btn-outline-secondary question-paper-title-edit-btn" data-paper-id="${escapeHtml(paper.id)}" title="Edit title">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                  ` : ""}
                   <span class="badge" style="background:#16a085;color:white">${questionCount} Questions</span>
                 </div>
+              </div>
+              <div class="small text-muted mb-1">
+                Author: ${escapeHtml(getQuestionPaperAuthorName(paper))}${canEdit ? " (you)" : ""}
               </div>
               <div class="small text-muted mb-3">
                 ${subjects.length ? escapeHtml(subjects.join(", ")) : "No subjects found"}
@@ -1054,6 +1105,10 @@ function renderQuestionPaperList() {
 function openQuestionPaperTitleModal(paperId) {
   const paper = questionPapers.find((item) => item.id === paperId);
   if (!paper || !titleModalEl || !titleInputEl || !titleIdEl) return;
+  if (!isQuestionPaperAuthor(paper)) {
+    alert("Only the question paper author can edit this title.");
+    return;
+  }
 
   pendingTitlePaper = paper;
   titleIdEl.value = paper.id;
@@ -1068,6 +1123,10 @@ function openQuestionPaperTitleModal(paperId) {
 
 async function saveQuestionPaperTitle() {
   if (!pendingTitlePaper || !titleInputEl || !titleSaveBtn) return;
+  if (!isQuestionPaperAuthor(pendingTitlePaper)) {
+    setTitleMessage("Only the question paper author can edit this title.", "danger");
+    return;
+  }
 
   const nextTitle = normalizeText(titleInputEl.value);
   if (!nextTitle) {
@@ -1306,7 +1365,12 @@ async function loadQuestionPaperDetail() {
     currentQuestions = (currentQuestionPaper.questions || [])
       .map(buildQuestionDetails)
       .sort((a, b) => a.questionNumber - b.questionNumber);
-    if (detailImportCsvBtn) detailImportCsvBtn.disabled = false;
+    if (detailImportCsvBtn) {
+      detailImportCsvBtn.disabled = !isQuestionPaperAuthor(currentQuestionPaper);
+      detailImportCsvBtn.title = isQuestionPaperAuthor(currentQuestionPaper)
+        ? "Overwrite from CSV"
+        : "Only the question paper author can overwrite this question paper";
+    }
     if (detailExportCsvBtn) detailExportCsvBtn.disabled = currentQuestions.length === 0;
     renderSubjectOptions();
     renderQuestionPaperDetail();
