@@ -236,6 +236,45 @@ function showError(message) {
   setContentHtml(`<div class="alert alert-danger">${escapeHtml(message)}</div>`);
 }
 
+function getUserDetailsHtml(user = auth.currentUser) {
+  if (!user) return "";
+  return `
+    <div class="border rounded bg-light p-3 mt-3">
+      <div class="fw-semibold mb-2">Currently Logged In User</div>
+      <div><span class="text-muted">Email:</span> ${escapeHtml(user.email || "-")}</div>
+      <div><span class="text-muted">Name:</span> ${escapeHtml(user.displayName || "-")}</div>
+      <div><span class="text-muted">UID:</span> <code>${escapeHtml(user.uid || "-")}</code></div>
+    </div>
+  `;
+}
+
+function showNoAssignedSections(user = auth.currentUser) {
+  const message = "No sections are assigned to this teacher.";
+  setResultsViewToggleVisible(false);
+  setTableScoreControlsVisible(false);
+  subtitleEl.textContent = message;
+  setContentHtml(`
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="alert alert-warning mb-3">${escapeHtml(message)}</div>
+        ${getUserDetailsHtml(user)}
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <a class="btn" style="background:#16a085;color:white;border:none;" href="index.html">
+            <i class="bi bi-house me-1"></i>Homepage
+          </a>
+          <button type="button" id="no-section-logout-btn" class="btn btn-outline-danger">
+            <i class="bi bi-box-arrow-right me-1"></i>Logout & Homepage
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById("no-section-logout-btn")?.addEventListener("click", async () => {
+    await auth.signOut();
+    window.location.href = "index.html";
+  });
+}
+
 function getDashboardSignInUrl() {
   const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return `index.html?redirect=${encodeURIComponent(currentPath)}`;
@@ -1882,7 +1921,7 @@ async function loadTestResults(testId) {
     const teacherSections = await fetchTeacherSections(user.email);
     
     if (teacherSections.length === 0) {
-      showError("No sections are assigned to this teacher.");
+      showNoAssignedSections(user);
       return;
     }
     
@@ -3234,7 +3273,7 @@ async function initializePage() {
       const teacherSections = await fetchTeacherSections(user.email);
       
       if (teacherSections.length === 0) {
-        showError("No sections are assigned to this teacher.");
+        showNoAssignedSections(user);
         return;
       }
       

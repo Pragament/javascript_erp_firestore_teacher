@@ -229,6 +229,46 @@ elements.googleSignin.onclick = async () => {
 // Sign out
 elements.signoutBtn.onclick = () => auth.signOut();
 
+function getLoggedInUserDetailsHtml() {
+    if (!currentUser) return '';
+    return `
+        <div class="border rounded bg-light p-3 mt-3 text-start">
+            <div class="fw-semibold mb-2">Currently Logged In User</div>
+            <div><span class="text-muted">Email:</span> ${escapeHtml(currentUser.email || '-')}</div>
+            <div><span class="text-muted">Name:</span> ${escapeHtml(currentUser.displayName || '-')}</div>
+            <div><span class="text-muted">UID:</span> <code>${escapeHtml(currentUser.uid || '-')}</code></div>
+        </div>
+    `;
+}
+
+function getNoAssignedSectionsHtml(message) {
+    return `
+        <div class="p-4">
+            <div class="card border-warning">
+                <div class="card-body text-center">
+                    <div class="alert alert-warning mb-3">${escapeHtml(message)}</div>
+                    ${getLoggedInUserDetailsHtml()}
+                    <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
+                        <a class="btn" style="background:#16a085;color:white;border:none;" href="index.html">
+                            <i class="bi bi-house me-1"></i>Homepage
+                        </a>
+                        <button type="button" id="no-section-dashboard-logout-btn" class="btn btn-outline-danger">
+                            <i class="bi bi-box-arrow-right me-1"></i>Logout & Homepage
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function bindNoAssignedSectionsActions() {
+    document.getElementById('no-section-dashboard-logout-btn')?.addEventListener('click', async () => {
+        await auth.signOut();
+        window.location.href = 'index.html';
+    });
+}
+
 // Initialize app after authentication
 async function initializeApp() {
     await loadAssignedSections();
@@ -1578,7 +1618,9 @@ async function loadAssignedSections() {
             .where('teacherEmail', '==', currentUser.email)
             .get();
 
-        if (snapshot.empty && schoolSections.length === 0) {
+        const assignmentSections = snapshot.empty ? [] : normalizeAssignedSections(snapshot);
+
+        if (assignmentSections.length === 0) {
             // Check if teacher exists in schools/{schoolId}/teachers collection
             const schoolCheck = await checkTeacherInSchools(currentUser.email);
 
@@ -1593,7 +1635,8 @@ async function loadAssignedSections() {
                 if (elements.sectionInfo) {
                     elements.sectionInfo.classList.add('d-none');
                 }
-                elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are registered as a teacher but not assigned to any section yet. Contact your school admin.</div>';
+                elements.testsContainer.innerHTML = getNoAssignedSectionsHtml('You are registered as a teacher but not assigned to any section yet. Contact your school admin.');
+                bindNoAssignedSectionsActions();
                 renderSectionSwitcher();
                 return;
             }
@@ -1606,29 +1649,26 @@ async function loadAssignedSections() {
             if (elements.sectionInfo) {
                 elements.sectionInfo.classList.add('d-none');
             }
-            elements.testsContainer.innerHTML = '<div class="p-4 text-center text-muted">You are not assigned to any section yet. Contact your school admin.</div>';
+            elements.testsContainer.innerHTML = getNoAssignedSectionsHtml('No sections are assigned to this teacher. Contact your school admin.');
+            bindNoAssignedSectionsActions();
             renderSectionSwitcher();
             return;
         }
 
-        // Combine sections from both sources
-        const assignmentSections = snapshot.empty ? [] : normalizeAssignedSections(snapshot);
-
-        // Merge sections, avoiding duplicates (prefer assignment sections if same ID)
-        const sectionMap = new Map();
-
-        // Add schoolSections first
-        schoolSections.forEach(section => {
-            sectionMap.set(section.id, section);
-        });
-
-        // Add assignment sections (will overwrite if duplicate, keeping schoolId from assignments if present)
-        assignmentSections.forEach(section => {
-            sectionMap.set(section.id, section);
-        });
-
-        availableSections = Array.from(sectionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-        console.log('[DEBUG] availableSections after merge:', availableSections);
+        // Only assignment sections grant teacher access. School sections are used only as metadata.
+        const schoolSectionById = new Map(schoolSections.map(section => [section.id, section]));
+        availableSections = assignmentSections
+            .map(section => {
+                const schoolSection = schoolSectionById.get(section.id) || {};
+                return {
+                    ...schoolSection,
+                    ...section,
+                    name: section.name || schoolSection.name || section.id,
+                    schoolId: section.schoolId || schoolSection.schoolId || null,
+                };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+        console.log('[DEBUG] availableSections from teacher assignments only:', availableSections);
 
         setCurrentSection(currentSectionId || availableSections[0]?.id || null);
         renderSectionSwitcher();
