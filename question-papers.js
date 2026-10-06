@@ -94,25 +94,16 @@ function getCurrentUserEmail() {
 
 function getQuestionPaperAuthorName(paper) {
   return normalizeText(
-    paper?.author?.displayName
-    || paper?.authorName
-    || paper?.createdByName
-    || paper?.author?.email
-    || paper?.authorEmail
-    || paper?.createdBy,
+    paper?.createdBy,
     "Unknown author",
   );
 }
 
 function isQuestionPaperAuthor(paper) {
   if (!paper || !currentUser) return false;
-  const authorUid = normalizeText(paper.authorUid || paper.author?.uid);
-  if (authorUid && currentUser.uid && authorUid === currentUser.uid) return true;
-
   const userEmail = getCurrentUserEmail();
-  if (!userEmail) return false;
-  const authorEmail = normalizeText(paper.authorEmail || paper.author?.email || paper.createdBy).toLowerCase();
-  return Boolean(authorEmail && authorEmail === userEmail);
+  const createdBy = normalizeText(paper.createdBy).toLowerCase();
+  return Boolean(createdBy && (createdBy === userEmail || createdBy === normalizeText(currentUser.uid).toLowerCase()));
 }
 
 function normalizeText(value, fallback = "") {
@@ -463,11 +454,6 @@ async function confirmQuestionPaperImport() {
 
   try {
     const docRef = firestore.collection("questionpapers").doc();
-    const author = {
-      uid: currentUser.uid || "",
-      email: currentUser.email || "",
-      displayName: currentUser.displayName || "",
-    };
     const paperData = {
       questionPaperID: docRef.id,
       templateName: pendingQuestionPaperImport.name,
@@ -478,10 +464,6 @@ async function confirmQuestionPaperImport() {
       subjects: pendingQuestionPaperImport.subjects,
       questions: pendingQuestionPaperImport.questions,
       importedFrom: "csv",
-      author,
-      authorUid: author.uid,
-      authorEmail: author.email,
-      authorName: author.displayName,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: currentUser.email || "",
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),

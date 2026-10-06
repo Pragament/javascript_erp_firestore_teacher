@@ -453,14 +453,16 @@ function normalizeQuestionPaperAuthorValue(value) {
 
 function isCurrentUserQuestionPaperAuthor(paper) {
     if (!paper || !currentUser) return false;
-
-    const authorUid = String(paper.authorUid || paper.author?.uid || '').trim();
-    if (authorUid && currentUser.uid && authorUid === currentUser.uid) return true;
-
     const currentEmail = normalizeQuestionPaperAuthorValue(currentUser.email);
-    if (!currentEmail) return false;
-    const authorEmail = normalizeQuestionPaperAuthorValue(paper.authorEmail || paper.author?.email || paper.createdBy);
-    return Boolean(authorEmail && authorEmail === currentEmail);
+    const createdBy = normalizeQuestionPaperAuthorValue(paper.createdBy);
+    return Boolean(createdBy && (createdBy === currentEmail || createdBy === normalizeQuestionPaperAuthorValue(currentUser.uid)));
+}
+
+function isCurrentUserTestAuthor(test) {
+    if (!test || !currentUser) return false;
+    const currentEmail = normalizeQuestionPaperAuthorValue(currentUser.email);
+    const createdBy = normalizeQuestionPaperAuthorValue(test.createdBy);
+    return Boolean(createdBy && (createdBy === currentEmail || createdBy === normalizeQuestionPaperAuthorValue(currentUser.uid)));
 }
 
 function getStoredQuestionPaperSearchQuery() {
@@ -588,6 +590,9 @@ async function openTestEditModal(testId) {
         if (!availableSections.some((section) => section.id === test.sectionId)) {
             throw new Error('You do not have access to edit this test.');
         }
+        if (!isCurrentUserTestAuthor(test)) {
+            throw new Error('Only the test author can edit this test.');
+        }
 
         currentEditingTest = test;
         populateTestEditDropdowns(test);
@@ -644,6 +649,11 @@ async function saveTestEdit() {
 
     const selectedSection = availableSections.find((section) => section.id === elements.editTestSection.value);
     const isNewTest = currentEditingTest.isNew === true;
+    if (!isNewTest && !isCurrentUserTestAuthor(currentEditingTest)) {
+        elements.editTestMessage.textContent = 'Only the test author can edit this test.';
+        elements.editTestMessage.className = 'small mt-3 text-danger';
+        return;
+    }
     const before = isNewTest
         ? { testName: '', testDate: '', sectionId: '', sectionName: '', questionPaperID: '' }
         : getTestEditFieldSnapshot(currentEditingTest);
@@ -1784,6 +1794,7 @@ async function loadTests() {
             const test = doc.data();
             const resultCount = await getResultCount(doc.id);
             const subjectButtonsHtml = await getSubjectButtonsHtml(doc.id, test);
+            const canEditTest = isCurrentUserTestAuthor(test);
 
             // Format test date
             const testDateObj = test.testDate?.toDate?.() || new Date(test.testDate || null);
@@ -1794,9 +1805,11 @@ async function loadTests() {
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <h5 class="fw-bold">${escapeHtml(test.testName || 'Test')}</h5>
                         <div class="d-flex align-items-center gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-secondary edit-test-btn" data-test-id="${escapeHtml(doc.id)}" title="Edit test">
-                                <i class="bi bi-pencil-square"></i>
-                            </button>
+                            ${canEditTest ? `
+                                <button type="button" class="btn btn-sm btn-outline-secondary edit-test-btn" data-test-id="${escapeHtml(doc.id)}" title="Edit test">
+                                    <i class="bi bi-pencil-square"></i>
+                                </button>
+                            ` : ''}
                             <span class="badge" style="background:#16a085;color:white">${resultCount} Results</span>
                         </div>
                     </div>
