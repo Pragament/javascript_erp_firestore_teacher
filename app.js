@@ -145,6 +145,7 @@ let teacherEvents = [];
 let selectedPSEDIndicators = [];
 let currentEditingTest = null;
 let questionPaperOptions = [];
+let questionPaperDebugAllOptions = [];
 let pendingBubbleImport = null;
 let bubbleImportPreviewSort = { key: 'previewRank', direction: 'asc' };
 let bubbleImportAbsenteeSort = { key: 'roll', direction: 'asc' };
@@ -208,6 +209,8 @@ const psedIndicators = [
 auth.onAuthStateChanged(async (user) => {
     if (user) {
         currentUser = user;
+        questionPaperOptions = [];
+        questionPaperDebugAllOptions = [];
         if (redirectToPreviousPageAfterLogin()) return;
 
         elements.authScreen.classList.add('d-none');
@@ -217,6 +220,8 @@ auth.onAuthStateChanged(async (user) => {
         await initializeApp();
     } else {
         currentUser = null;
+        questionPaperOptions = [];
+        questionPaperDebugAllOptions = [];
         elements.mainApp.classList.add('d-none');
         elements.authScreen.classList.remove('d-none');
     }
@@ -458,6 +463,49 @@ function isCurrentUserQuestionPaperAuthor(paper) {
     return Boolean(createdBy && (createdBy === currentEmail || createdBy === normalizeQuestionPaperAuthorValue(currentUser.uid)));
 }
 
+function getQuestionPaperOwnershipDebug(paper) {
+    const createdBy = normalizeQuestionPaperAuthorValue(paper.createdBy);
+    const currentEmail = normalizeQuestionPaperAuthorValue(currentUser?.email);
+    const currentUid = normalizeQuestionPaperAuthorValue(currentUser?.uid);
+    const matchesEmail = Boolean(createdBy && currentEmail && createdBy === currentEmail);
+    const matchesUid = Boolean(createdBy && currentUid && createdBy === currentUid);
+    return {
+        id: paper.id || '',
+        questionPaperID: paper.questionPaperID || '',
+        title: paper.templateName || paper.testName || paper.name || paper.title || '',
+        createdBy: paper.createdBy || '',
+        currentEmail: currentUser?.email || '',
+        currentUid: currentUser?.uid || '',
+        matchesEmail,
+        matchesUid,
+        included: matchesEmail || matchesUid,
+    };
+}
+
+function logQuestionPaperOptionsDebug(allPapers, ownedPapers, source) {
+    const excludedPapers = allPapers.filter((paper) => !isCurrentUserQuestionPaperAuthor(paper));
+    const missingCreatedByCount = allPapers.filter((paper) => !normalizeQuestionPaperAuthorValue(paper.createdBy)).length;
+
+    console.groupCollapsed(`[Question Papers Debug] ${source}: ${ownedPapers.length}/${allPapers.length} authored papers available`);
+    console.info('Logged in user:', {
+        email: currentUser?.email || '',
+        uid: currentUser?.uid || '',
+        displayName: currentUser?.displayName || '',
+    });
+    console.info('Counts:', {
+        fetched: allPapers.length,
+        includedAuthoredByUser: ownedPapers.length,
+        excluded: excludedPapers.length,
+        missingCreatedBy: missingCreatedByCount,
+    });
+    console.table(ownedPapers.slice(0, 20).map(getQuestionPaperOwnershipDebug));
+    if (excludedPapers.length) {
+        console.info('First excluded papers. Check createdBy against logged-in email/uid:');
+        console.table(excludedPapers.slice(0, 20).map(getQuestionPaperOwnershipDebug));
+    }
+    console.groupEnd();
+}
+
 function isCurrentUserTestAuthor(test) {
     if (!test || !currentUser) return false;
     const currentEmail = normalizeQuestionPaperAuthorValue(currentUser.email);
@@ -519,13 +567,18 @@ function renderQuestionPaperSelectOptions(selectedValue = '') {
 }
 
 async function fetchQuestionPaperOptions() {
-    if (questionPaperOptions.length > 0) return questionPaperOptions;
+    if (questionPaperOptions.length > 0) {
+        logQuestionPaperOptionsDebug(questionPaperDebugAllOptions.length ? questionPaperDebugAllOptions : questionPaperOptions, questionPaperOptions, 'cached Create/Edit Test dropdown');
+        return questionPaperOptions;
+    }
     // Test creation/editing can attach any paper authored by the teacher, independent of the selected section.
     const snapshot = await firestore.collection('questionpapers').get();
-    questionPaperOptions = snapshot.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
+    const allPapers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    questionPaperDebugAllOptions = allPapers;
+    questionPaperOptions = allPapers
         .filter(isCurrentUserQuestionPaperAuthor)
         .sort((a, b) => getQuestionPaperOptionLabel(a).localeCompare(getQuestionPaperOptionLabel(b), undefined, { numeric: true }));
+    logQuestionPaperOptionsDebug(allPapers, questionPaperOptions, 'fresh Create/Edit Test dropdown fetch');
     return questionPaperOptions;
 }
 
