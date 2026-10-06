@@ -520,6 +520,7 @@ function renderQuestionPaperSelectOptions(selectedValue = '') {
 
 async function fetchQuestionPaperOptions() {
     if (questionPaperOptions.length > 0) return questionPaperOptions;
+    // Test creation/editing can attach any paper authored by the teacher, independent of the selected section.
     const snapshot = await firestore.collection('questionpapers').get();
     questionPaperOptions = snapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))

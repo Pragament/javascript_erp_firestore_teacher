@@ -29,6 +29,7 @@ const listContentEl = document.getElementById("question-papers-content");
 const listSubtitleEl = document.getElementById("question-papers-subtitle");
 const listSearchEl = document.getElementById("question-papers-search");
 const listSortEl = document.getElementById("question-papers-sort");
+const listOwnerFilterEl = document.getElementById("question-papers-owner-filter");
 const listRefreshBtn = document.getElementById("question-papers-refresh");
 const createQuestionPaperBtn = document.getElementById("create-question-paper-btn");
 const importModalEl = document.getElementById("questionPaperImportModal");
@@ -1032,7 +1033,11 @@ function renderQuestionPaperList() {
   if (!listContentEl) return;
 
   const search = normalizeComparable(listSearchEl?.value);
-  const filtered = sortPapers(questionPapers.filter((paper) => !search || getPaperHaystack(paper).includes(search)));
+  const ownerFilter = listOwnerFilterEl?.value || "all";
+  const filtered = sortPapers(questionPapers.filter((paper) => {
+    if (ownerFilter === "mine" && !isQuestionPaperAuthor(paper)) return false;
+    return !search || getPaperHaystack(paper).includes(search);
+  }));
 
   if (listSubtitleEl) {
     listSubtitleEl.textContent = `${filtered.length} of ${questionPapers.length} question paper${questionPapers.length === 1 ? "" : "s"}`;
@@ -1380,6 +1385,7 @@ function requireAuthThen(callback) {
 if (listContentEl) {
   listSearchEl?.addEventListener("input", renderQuestionPaperList);
   listSortEl?.addEventListener("change", renderQuestionPaperList);
+  listOwnerFilterEl?.addEventListener("change", renderQuestionPaperList);
   listRefreshBtn?.addEventListener("click", loadQuestionPapers);
   listContentEl?.addEventListener("click", (event) => {
     const editButton = event.target.closest(".question-paper-title-edit-btn");
